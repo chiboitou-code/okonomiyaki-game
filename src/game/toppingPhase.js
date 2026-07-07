@@ -1,4 +1,5 @@
 import { loadImage, isReady } from "./assets.js";
+import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 
 export const TOPPING_TYPES = {
   SAUCE: "sauce",
@@ -109,8 +110,8 @@ export class ToppingPhase {
 
     // ---- トッピング中 ----
     const bodyCenterX = width / 2;
-    const bodyCenterY = height * 0.45;
-    const w = width * 0.78;
+    const bodyCenterY = height * BODY_CENTER_Y_RATIO;
+    const w = width * BODY_WIDTH_RATIO;
 
     // お皿
     if (isReady(PLATE_IMG)) {

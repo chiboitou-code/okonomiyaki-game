@@ -1,16 +1,17 @@
 import { TimingGauge } from "./gauge.js";
 import { loadImage, isReady } from "./assets.js";
+import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 
 const TOTAL_FLIPS = 4;
+const BODY_BOUNCE_DURATION = 0.35; // 秒。バウンド演出の長さ
 
 // ---- 画像パス設定 ----
 const SPATULA_IMG = loadImage("/images/ui/spatula.png");
 const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
 const STAR_IMG = loadImage("/images/ui/star_effect.png");
 const NEEDLE_IMG = loadImage("/images/ui/gauge_needle.png");
-const FAIL_IMG = loadImage("/images/okonomiyaki/body_fail.png"); // 失敗時の画像（「ざんねん」の文字入り、縦長でもOK）
+const FAIL_IMG = loadImage("/images/okonomiyaki/body_fail.png");
 
-// 本体は「表(豚肉面)/裏」が交互に入れ替わりながら、焼きが進んでいく5状態（成功時のみ進む）
 const BODY_IMAGES = [
   loadImage("/images/okonomiyaki/body_00_raw.png"),
   loadImage("/images/okonomiyaki/body_01_backside.png"),
@@ -20,35 +21,31 @@ const BODY_IMAGES = [
 ];
 
 export class CookingPhase {
-  /**
-   * @param {object} opts
-   * @param {(results: string[]) => void} opts.onComplete - 4回とも成功して焼き上がった時
-   * @param {() => void} opts.onFail - 失敗後、「もういっかいする」がタップされた時
-   */
   constructor({ onComplete, onFail }) {
     this.onComplete = onComplete;
     this.onFail = onFail;
     this.flipIndex = 0;
     this.results = [];
     this.gauge = new TimingGauge({ speed: 0.55, zoneWidth: 0.35 });
-    this.lastJudgeLabel = null; // "success" | "fail" | null
+    this.lastJudgeLabel = null;
     this.judgeShownAt = 0;
     this.finished = false;
-    this.awaitingRetry = false; // 失敗後、「もういっかいする」タップ待ちの状態
+    this.awaitingRetry = false;
+    this.bodyBounceAt = null; // バウンド演出の開始時刻（無い間はnull）
 
     this.steamParticles = [];
     this._lastSteamSpawn = 0;
   }
 
   update(deltaSeconds, elapsedSeconds) {
-    if (this.awaitingRetry) return; // 失敗後は何も進行させず、タップ待ち
+    if (this.awaitingRetry) return;
 
     this._updateSteam(deltaSeconds, elapsedSeconds);
 
     if (this.finished) return;
 
     if (this.lastJudgeLabel === "success" && elapsedSeconds - this.judgeShownAt < 0.6) {
-      return; // 成功演出を一瞬見せている間はゲージを止める
+      return;
     }
 
     if (this.lastJudgeLabel === "success" && elapsedSeconds - this.judgeShownAt >= 0.6) {
@@ -84,20 +81,23 @@ export class CookingPhase {
 
   handleTap(elapsedSeconds) {
     if (this.awaitingRetry) {
-      // 「もういっかいする」の画面をタップ → リトライ（呼び出し側でタイトルに戻す）
       this.onFail();
       return;
     }
     if (this.finished || this.lastJudgeLabel) return;
 
-    const result = this.gauge.judge(); // "success" | "fail"
+    const result = this.gauge.judge();
 
     if (result === "success") {
       this.results.push(result);
       this.lastJudgeLabel = "success";
       this.judgeShownAt = elapsedSeconds;
+
+      // 2回目の成功（＝2枚目の本体画像に切り替わる瞬間）から、バウンド演出を入れる
+      if (this.results.length >= 2) {
+        this.bodyBounceAt = elapsedSeconds;
+      }
     } else {
-      // 失敗：即座に「もういっかいする」タップ待ち状態に入る
       this.lastJudgeLabel = "fail";
       this.awaitingRetry = true;
     }
@@ -105,14 +105,12 @@ export class CookingPhase {
 
   render(ctx, width, height, elapsedSeconds) {
     const centerX = width / 2;
-    const centerY = height * 0.62;
-    const bodyRadiusX = width * 0.32;
-    const bodyRadiusY = width * 0.25;
+    const centerY = height * BODY_CENTER_Y_RATIO;
+    const bodyDrawWidth = width * BODY_WIDTH_RATIO;
 
     // ---- 失敗後：失敗画像＋点滅するリトライ案内のみ表示 ----
     if (this.awaitingRetry) {
       if (isReady(FAIL_IMG)) {
-        // 画面全体を覆うように表示（はみ出す分は中央基準でトリミングする）
         const scale = Math.max(width / FAIL_IMG.naturalWidth, height / FAIL_IMG.naturalHeight);
         const w = FAIL_IMG.naturalWidth * scale;
         const h = FAIL_IMG.naturalHeight * scale;
@@ -120,7 +118,7 @@ export class CookingPhase {
       } else {
         ctx.fillStyle = "#3a2a20";
         ctx.beginPath();
-        ctx.ellipse(centerX, centerY, bodyRadiusX, bodyRadiusY, 0, 0, Math.PI * 2);
+        ctx.ellipse(centerX, centerY, bodyDrawWidth / 2, bodyDrawWidth * 0.4, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.fillStyle = "#fff";
         ctx.font = "bold 24px sans-serif";
@@ -128,7 +126,6 @@ export class CookingPhase {
         ctx.fillText("ざんねん…", centerX, centerY);
       }
 
-      // 点滅文字の背景に帯を敷いて、どんな絵でも読みやすくする
       const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsedSeconds * (Math.PI * 2) / 1.4));
       ctx.save();
       ctx.fillStyle = "rgba(0,0,0,0.5)";
@@ -142,18 +139,39 @@ export class CookingPhase {
       return;
     }
 
-    // ---- 生地本体 ----
+    // ---- 生地本体（トッピングフェーズと同じ位置・サイズになるよう layout.js の値を使用） ----
     const bodyImg = BODY_IMAGES[this.results.length];
+
+    // バウンド演出のスケール計算（対象期間中だけ1より少し大きくなって戻る）
+    let bounceScale = 1;
+    if (this.bodyBounceAt !== null) {
+      const t = elapsedSeconds - this.bodyBounceAt;
+      if (t < BODY_BOUNCE_DURATION) {
+        const progress = t / BODY_BOUNCE_DURATION;
+        bounceScale = 1 + 0.18 * Math.sin(progress * Math.PI);
+      } else {
+        this.bodyBounceAt = null;
+      }
+    }
+
+    let bodyDrawHeight;
+    ctx.save();
+    ctx.translate(centerX, centerY);
+    ctx.scale(bounceScale, bounceScale);
     if (isReady(bodyImg)) {
-      const w = bodyRadiusX * 2;
-      const h = bodyRadiusY * 2;
-      ctx.drawImage(bodyImg, centerX - w / 2, centerY - h / 2, w, h);
+      bodyDrawHeight = bodyDrawWidth * (bodyImg.naturalHeight / bodyImg.naturalWidth);
+      ctx.drawImage(bodyImg, -bodyDrawWidth / 2, -bodyDrawHeight / 2, bodyDrawWidth, bodyDrawHeight);
     } else {
+      bodyDrawHeight = bodyDrawWidth * 0.85;
       ctx.fillStyle = "#f3e2c7";
       ctx.beginPath();
-      ctx.ellipse(centerX, centerY, bodyRadiusX, bodyRadiusY, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, bodyDrawWidth / 2, bodyDrawHeight / 2, 0, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
+
+    const bodyRadiusX = bodyDrawWidth / 2;
+    const bodyRadiusY = bodyDrawHeight / 2;
 
     // ---- 湯気（画像が無い間は何も描かない） ----
     if (isReady(STEAM_IMG)) {
@@ -171,17 +189,15 @@ export class CookingPhase {
     // ---- へら（右手前と左手前、2本配置） ----
     const spatulaTilt = this.lastJudgeLabel ? -0.5 : -0.15;
     if (isReady(SPATULA_IMG)) {
-      const w = width * 0.55; // ← この数値を変えるとへらの大きさが変わる
+      const w = width * 0.55;
       const h = w * (SPATULA_IMG.naturalHeight / SPATULA_IMG.naturalWidth);
 
-      // 右側
       ctx.save();
       ctx.translate(centerX + bodyRadiusX * 1.0, centerY + bodyRadiusY * 1.0);
       ctx.rotate(spatulaTilt);
       ctx.drawImage(SPATULA_IMG, -w * 0.15, -h * 0.85, w, h);
       ctx.restore();
 
-      // 左側（左右反転させて配置）
       ctx.save();
       ctx.translate(centerX - bodyRadiusX * 1.0, centerY + bodyRadiusY * 1.0);
       ctx.rotate(-spatulaTilt);
@@ -190,7 +206,7 @@ export class CookingPhase {
       ctx.restore();
     }
 
-    // ---- 見出し（背景に帯を敷いて、どんな背景でも読みやすくする） ----
+    // ---- 見出し ----
     ctx.save();
     ctx.font = "bold 26px sans-serif";
     ctx.textAlign = "center";
@@ -240,7 +256,6 @@ export class CookingPhase {
     ctx.fillStyle = "#ddd";
     ctx.fillRect(gaugeX, gaugeY, gaugeWidth, gaugeHeight);
 
-    // 緑(早すぎ)→黄(ジャストゾーン)→赤(遅すぎ)のグラデーション
     const gradient = ctx.createLinearGradient(gaugeX, 0, gaugeX + gaugeWidth, 0);
     gradient.addColorStop(0, "#4caf50");
     gradient.addColorStop(0.5, "#ffd166");
@@ -248,7 +263,6 @@ export class CookingPhase {
     ctx.fillStyle = gradient;
     ctx.fillRect(gaugeX, gaugeY, gaugeWidth, gaugeHeight);
 
-    // 成功ゾーン（ジャストゾーン）の範囲を白い枠ではっきり示す
     const zoneX = gaugeX + this.gauge.zoneStart * gaugeWidth;
     const zoneW = (this.gauge.zoneEnd - this.gauge.zoneStart) * gaugeWidth;
     ctx.save();
@@ -257,7 +271,6 @@ export class CookingPhase {
     ctx.strokeRect(zoneX, gaugeY - 2, zoneW, gaugeHeight + 4);
     ctx.restore();
 
-    // ゾーンの上に「ここ！」の三角マーク
     ctx.fillStyle = "#333";
     ctx.beginPath();
     ctx.moveTo(zoneX + zoneW / 2, gaugeY - 8);
