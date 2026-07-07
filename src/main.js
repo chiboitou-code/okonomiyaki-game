@@ -31,6 +31,14 @@ function resize() {
 window.addEventListener("resize", resize);
 resize();
 
+// 対応している環境（Androidでホーム画面に追加した場合など）では、念のため縦向き固定を試みる。
+// 非対応のブラウザ（iOS Safari等）ではエラーになるだけなので、失敗しても無視してよい。
+if (screen.orientation && screen.orientation.lock) {
+  screen.orientation.lock("portrait").catch(() => {
+    // 非対応・失敗時は何もしない（CSSの回転案内オーバーレイでカバーされる）
+  });
+}
+
 // ---------- UI描画（タイトル画面のみDOM。それ以外はCanvas側で描画する） ----------
 function renderUI() {
   uiLayer.innerHTML = "";
@@ -46,7 +54,7 @@ function renderUI() {
     const logoImg = document.createElement("img");
     logoImg.src = resolvePath("/images/ui/title_logo.png");
     logoImg.alt = "くるっと！おこのみやき";
-    logoImg.style.cssText = "max-width:80%;display:none;";
+    logoImg.style.cssText = "max-width:104%;display:none;";
     logoImg.onload = () => {
       logoImg.style.display = "block";
       title.style.display = "none";

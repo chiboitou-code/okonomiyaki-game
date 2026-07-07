@@ -3,7 +3,7 @@ import { loadImage, isReady } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 
 const TOTAL_FLIPS = 4;
-const BODY_BOUNCE_DURATION = 0.35; // 秒。バウンド演出の長さ
+const BODY_BOUNCE_DURATION = 0.4; // 秒。バウンド演出の長さ
 
 // ---- 画像パス設定 ----
 const SPATULA_IMG = loadImage("/images/ui/spatula.png");
@@ -93,10 +93,8 @@ export class CookingPhase {
       this.lastJudgeLabel = "success";
       this.judgeShownAt = elapsedSeconds;
 
-      // 2回目の成功（＝2枚目の本体画像に切り替わる瞬間）から、バウンド演出を入れる
-      if (this.results.length >= 2) {
-        this.bodyBounceAt = elapsedSeconds;
-      }
+      // 1回目の成功から、バウンド演出を入れる
+      this.bodyBounceAt = elapsedSeconds;
     } else {
       this.lastJudgeLabel = "fail";
       this.awaitingRetry = true;
@@ -142,13 +140,16 @@ export class CookingPhase {
     // ---- 生地本体（トッピングフェーズと同じ位置・サイズになるよう layout.js の値を使用） ----
     const bodyImg = BODY_IMAGES[this.results.length];
 
-    // バウンド演出のスケール計算（対象期間中だけ1より少し大きくなって戻る）
+    // バウンド演出の計算（対象期間中、大きく膨らみつつ少し浮き上がって戻る）
     let bounceScale = 1;
+    let bounceOffsetY = 0;
     if (this.bodyBounceAt !== null) {
       const t = elapsedSeconds - this.bodyBounceAt;
       if (t < BODY_BOUNCE_DURATION) {
         const progress = t / BODY_BOUNCE_DURATION;
-        bounceScale = 1 + 0.18 * Math.sin(progress * Math.PI);
+        const wave = Math.sin(progress * Math.PI);
+        bounceScale = 1 + 0.4 * wave; // 膨らみを強め（0.18→0.4）
+        bounceOffsetY = -bodyDrawWidth * 0.12 * wave; // 少し上に跳ねる
       } else {
         this.bodyBounceAt = null;
       }
@@ -156,7 +157,7 @@ export class CookingPhase {
 
     let bodyDrawHeight;
     ctx.save();
-    ctx.translate(centerX, centerY);
+    ctx.translate(centerX, centerY + bounceOffsetY);
     ctx.scale(bounceScale, bounceScale);
     if (isReady(bodyImg)) {
       bodyDrawHeight = bodyDrawWidth * (bodyImg.naturalHeight / bodyImg.naturalWidth);
@@ -208,14 +209,14 @@ export class CookingPhase {
 
     // ---- 見出し ----
     ctx.save();
-    ctx.font = "bold 26px sans-serif";
+    ctx.font = "bold 21px sans-serif"; // 元の26pxから20%縮小
     ctx.textAlign = "center";
     const headingText = "タイミングよくひっくり返そう！";
     const headingMetrics = ctx.measureText(headingText);
     const headingPadX = 16;
     const headingBarW = headingMetrics.width + headingPadX * 2;
-    const headingBarH = 40;
-    const headingY = height * 0.1;
+    const headingBarH = 36;
+    const headingY = height * 0.13; // 少し下に移動
     ctx.fillStyle = "rgba(90,45,12,0.75)";
     ctx.beginPath();
     ctx.roundRect(width / 2 - headingBarW / 2, headingY - headingBarH * 0.72, headingBarW, headingBarH, 20);
@@ -223,11 +224,6 @@ export class CookingPhase {
     ctx.fillStyle = "#fff";
     ctx.fillText(headingText, width / 2, headingY);
     ctx.restore();
-
-    ctx.fillStyle = "#333";
-    ctx.font = "14px sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(`${Math.min(this.flipIndex + 1, TOTAL_FLIPS)} / ${TOTAL_FLIPS}回目`, width / 2, height * 0.15);
 
     if (this.lastJudgeLabel === "success") {
       ctx.fillStyle = "#e0552b";

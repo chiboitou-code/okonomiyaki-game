@@ -85,3 +85,46 @@ html, body {
 .topping-icon.selected {
   border-color: #ff8a3d;
 }
+
+/* ---- 横向き検知：スマホを横に倒したら案内を表示し、ゲーム画面を隠す ---- */
+#rotate-overlay {
+  display: none;
+}
+
+/* スマホ・タブレットサイズで、かつ横向き（横幅 > 縦幅）の時だけ表示 */
+@media screen and (orientation: landscape) and (max-width: 950px) {
+  #app {
+    display: none;
+  }
+  #rotate-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100vw;
+    height: 100dvh;
+    background: #fdf6e3;
+    text-align: center;
+  }
+  #rotate-overlay .rotate-icon {
+    font-size: 64px;
+    display: inline-block;
+    animation: rotate-hint 1.6s ease-in-out infinite;
+  }
+  #rotate-overlay p {
+    margin-top: 16px;
+    font-size: 20px;
+    font-weight: bold;
+    color: #5a2d0c;
+    line-height: 1.5;
+  }
+}
+
+@keyframes rotate-hint {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(-90deg);
+  }
+}
