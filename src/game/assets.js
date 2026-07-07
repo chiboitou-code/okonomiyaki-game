@@ -4,18 +4,22 @@
 
 const cache = new Map();
 
+// "/images/xxx.png" のような書き方のまま、公開先が https://user.github.io/repo-name/ の
+// ようにサブフォルダになっていても正しい場所を見るように変換する。
+// 例: base が "/okonomiyaki-game/" の場合、"/images/a.png" → "/okonomiyaki-game/images/a.png"
+export function resolvePath(path) {
+  const base = import.meta.env.BASE_URL || "/";
+  const cleanPath = path.startsWith("/") ? path.slice(1) : path;
+  return base.endsWith("/") ? base + cleanPath : base + "/" + cleanPath;
+}
+
 export function loadImage(path) {
-  // キャッシュキーは元のパスで統一
-  if (cache.has(path)) return cache.get(path);
+  const resolvedPath = resolvePath(path);
+  if (cache.has(resolvedPath)) return cache.get(resolvedPath);
 
   const img = new Image();
-  // GitHub Pages等のサブパス対応：絶対パスの場合はBASE_URLを付与
-  if (path.startsWith('/')) {
-    img.src = import.meta.env.BASE_URL + path.slice(1);
-  } else {
-    img.src = path;
-  }
-  cache.set(path, img);
+  img.src = resolvedPath;
+  cache.set(resolvedPath, img);
   return img;
 }
 

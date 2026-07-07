@@ -1,7 +1,7 @@
 import { createGameState, SCENES } from "./game/gameState.js";
 import { CookingPhase } from "./game/cookingPhase.js";
 import { ToppingPhase } from "./game/toppingPhase.js";
-import { loadImage, isReady } from "./game/assets.js";
+import { loadImage, isReady, resolvePath } from "./game/assets.js";
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -44,7 +44,7 @@ function renderUI() {
     title.style.cssText = "font-size:28px;font-weight:bold;color:#5a2d0c;";
 
     const logoImg = document.createElement("img");
-    logoImg.src = import.meta.env.BASE_URL + "images/ui/title_logo.png";
+    logoImg.src = resolvePath("/images/ui/title_logo.png");
     logoImg.alt = "くるっと！おこのみやき";
     logoImg.style.cssText = "max-width:80%;display:none;";
     logoImg.onload = () => {
