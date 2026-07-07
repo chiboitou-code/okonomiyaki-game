@@ -44,7 +44,7 @@ function renderUI() {
     title.style.cssText = "font-size:28px;font-weight:bold;color:#5a2d0c;";
 
     const logoImg = document.createElement("img");
-    logoImg.src = "/images/ui/title_logo.png";
+    logoImg.src = import.meta.env.BASE_URL + "images/ui/title_logo.png";
     logoImg.alt = "くるっと！おこのみやき";
     logoImg.style.cssText = "max-width:80%;display:none;";
     logoImg.onload = () => {

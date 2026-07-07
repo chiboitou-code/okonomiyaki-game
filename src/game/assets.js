@@ -5,11 +5,16 @@
 const cache = new Map();
 
 export function loadImage(path) {
+  // キャッシュキーは元のパスで統一
   if (cache.has(path)) return cache.get(path);
 
   const img = new Image();
-  img.src = path;
-  img.dataset ? null : null; // noop（古い環境向けの安全策）
+  // GitHub Pages等のサブパス対応：絶対パスの場合はBASE_URLを付与
+  if (path.startsWith('/')) {
+    img.src = import.meta.env.BASE_URL + path.slice(1);
+  } else {
+    img.src = path;
+  }
   cache.set(path, img);
   return img;
 }
