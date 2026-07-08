@@ -35,3 +35,37 @@ export function pickReadyRandom(images) {
   if (ready.length === 0) return null;
   return ready[Math.floor(Math.random() * ready.length)];
 }
+
+// これまでに loadImage() で読み込みを開始した「全ての画像」が、
+// 読み込み終わる（成功・失敗どちらでもOK）まで待つ。
+// 万が一ネットワークが遅すぎる場合に備えて timeoutMs で強制的に打ち切る。
+export function waitForAllImages({ timeoutMs = 10000, onProgress } = {}) {
+  const allImages = Array.from(cache.values());
+  const total = allImages.length;
+
+  return new Promise((resolve) => {
+    if (total === 0) {
+      resolve();
+      return;
+    }
+
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+      resolve();
+    };
+
+    const checkProgress = () => {
+      const loaded = allImages.filter((img) => img.complete).length;
+      onProgress?.(loaded, total);
+      if (loaded >= total) finish();
+    };
+
+    const intervalId = setInterval(checkProgress, 100);
+    const timeoutId = setTimeout(finish, timeoutMs); // 遅すぎる場合はタイムアウトで進行させる
+    checkProgress();
+  });
+}

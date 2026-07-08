@@ -1,5 +1,7 @@
-import { loadImage, isReady } from "./assets.js";
+import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
+import { playSound } from "./audio.js";
+import { SOUNDS } from "./sounds.js";
 
 export const TOPPING_TYPES = {
   SAUCE: "sauce",
@@ -11,7 +13,10 @@ export const TOPPING_TYPES = {
 // public/images/ にファイルを置くと自動的にこちらが使われる
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
-const COMPLETE_IMG = loadImage("/images/ui/complete.png"); // 「かんせい」の全面イラスト（body_fail.pngと同じ使い方）
+
+// 「かんせい」の全面イラスト：complete_01.png〜03.png を用意すればランダムで表示される。
+// 1枚だけでも今まで通り動く（枚数を増減したい場合はこの配列を編集する）
+const COMPLETE_IMAGES = ["01", "02", "03"].map((n) => loadImage(`/images/ui/complete_${n}.png`));
 
 const TOPPING_OVERLAY_IMAGES = {
   [TOPPING_TYPES.SAUCE]: loadImage("/images/toppings/topping_sauce.png"),
@@ -27,6 +32,14 @@ const FALLBACK_COLOR = {
   [TOPPING_TYPES.KATSUOBUSHI]: "rgba(217,154,91,0.5)",
 };
 
+// キラキラ粒子の色（トッピングごとに変える）
+const SPARKLE_COLOR = {
+  [TOPPING_TYPES.SAUCE]: "#ffb703",
+  [TOPPING_TYPES.MAYO]: "#fffbe6",
+  [TOPPING_TYPES.AONORI]: "#8bd17c",
+  [TOPPING_TYPES.KATSUOBUSHI]: "#ffcf5c",
+};
+
 // 順番に「ソース→マヨネーズ→あおのり→かつおぶし」と進んでいく
 const STEPS = [
   { type: TOPPING_TYPES.SAUCE, prompt: "ソースをぬろう！" },
@@ -36,6 +49,8 @@ const STEPS = [
 ];
 
 const STEP_PAUSE = 0.5; // 秒。トッピングが乗った後、次のステップ（または完成画面）に進むまでの間
+const SPARKLE_LIFETIME = 0.5; // 秒。キラキラ粒子の寿命
+const SPARKLE_COUNT = 14; // 1回のトッピングで飛び散る粒子の数
 
 export class ToppingPhase {
   /**
@@ -53,15 +68,25 @@ export class ToppingPhase {
     };
     this.justAppliedAt = null; // タップして乗せた直後の一瞬（次に進むまでの間）
     this.allDone = false; // 4つとも乗せ終わって「かんせい」画面になったか
+    this.selectedCompleteImg = null; // 「かんせい」画面用に選ばれた画像（allDoneになった瞬間に1回だけ選ぶ）
+    this.sparkles = []; // { angle, speed, age, color, size }
   }
 
   update(deltaSeconds, elapsedSeconds) {
+    // キラキラ粒子の経過時間を進める（完成後も余韻として動かし続ける）
+    for (const s of this.sparkles) {
+      s.age += deltaSeconds;
+    }
+    this.sparkles = this.sparkles.filter((s) => s.age < SPARKLE_LIFETIME);
+
     if (this.allDone) return;
     if (this.justAppliedAt !== null && elapsedSeconds - this.justAppliedAt >= STEP_PAUSE) {
       this.justAppliedAt = null;
       this.stepIndex += 1;
       if (this.stepIndex >= STEPS.length) {
         this.allDone = true; // ここで「かんせい」画面へ（一拍置いてから表示される）
+        this.selectedCompleteImg = pickReadyRandom(COMPLETE_IMAGES);
+        playSound(SOUNDS.clear);
       }
     }
   }
@@ -69,24 +94,41 @@ export class ToppingPhase {
   handleTap(elapsedSeconds) {
     if (this.allDone) {
       // 「かんせい」画面をタップ → リトライ（呼び出し側で画面遷移）
+      playSound(SOUNDS.retryTap);
       this.onRetry();
       return;
     }
     if (this.justAppliedAt !== null) return;
     if (this.stepIndex >= STEPS.length) return;
     const step = STEPS[this.stepIndex];
+    playSound(SOUNDS.toppingTap);
     this.active[step.type] = true;
     this.justAppliedAt = elapsedSeconds;
+    this._spawnSparkles(step.type);
+  }
+
+  _spawnSparkles(type) {
+    const color = SPARKLE_COLOR[type] || "#fff";
+    for (let i = 0; i < SPARKLE_COUNT; i++) {
+      this.sparkles.push({
+        angle: Math.random() * Math.PI * 2,
+        speed: 0.6 + Math.random() * 0.6, // 本体半径に対する割合/秒
+        age: 0,
+        color,
+        size: 3 + Math.random() * 4,
+      });
+    }
   }
 
   render(ctx, width, height, elapsedSeconds) {
     // ---- 完成後：全面に「かんせい」イラスト＋下部に「もういちど」 ----
     if (this.allDone) {
-      if (isReady(COMPLETE_IMG)) {
-        const scale = Math.max(width / COMPLETE_IMG.naturalWidth, height / COMPLETE_IMG.naturalHeight);
-        const w = COMPLETE_IMG.naturalWidth * scale;
-        const h = COMPLETE_IMG.naturalHeight * scale;
-        ctx.drawImage(COMPLETE_IMG, width / 2 - w / 2, height / 2 - h / 2, w, h);
+      if (this.selectedCompleteImg && isReady(this.selectedCompleteImg)) {
+        const img = this.selectedCompleteImg;
+        const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
+        const w = img.naturalWidth * scale;
+        const h = img.naturalHeight * scale;
+        ctx.drawImage(img, width / 2 - w / 2, height / 2 - h / 2, w, h);
       } else {
         ctx.fillStyle = "#ffdca3";
         ctx.fillRect(0, 0, width, height);
@@ -145,6 +187,27 @@ export class ToppingPhase {
         ctx.ellipse(bodyCenterX, bodyCenterY, w * 0.4, bodyH * 0.4, 0, 0, Math.PI * 2);
         ctx.fill();
       }
+    }
+
+    // ---- キラキラ粒子（トッピングが乗った瞬間、中心から放射状に飛び散る） ----
+    const burstRadius = w * 0.5; // 粒子が飛び散る最大距離の目安
+    for (const s of this.sparkles) {
+      const progress = s.age / SPARKLE_LIFETIME;
+      const distance = s.speed * burstRadius * progress;
+      const alpha = 1 - progress;
+      const px = bodyCenterX + Math.cos(s.angle) * distance;
+      const py = bodyCenterY + Math.sin(s.angle) * distance;
+      const size = s.size * (1 - progress * 0.4);
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.fillStyle = s.color;
+      ctx.shadowColor = s.color;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(px, py, size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
 
     // 今のステップの案内（トッピング済みの一瞬の間は表示しない）

@@ -1,6 +1,8 @@
 import { TimingGauge } from "./gauge.js";
 import { loadImage, isReady } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
+import { playSound } from "./audio.js";
+import { SOUNDS } from "./sounds.js";
 
 const TOTAL_FLIPS = 4;
 const BODY_BOUNCE_DURATION = 0.4; // 秒。バウンド演出の長さ
@@ -81,6 +83,7 @@ export class CookingPhase {
 
   handleTap(elapsedSeconds) {
     if (this.awaitingRetry) {
+      playSound(SOUNDS.retryTap);
       this.onFail();
       return;
     }
@@ -89,6 +92,9 @@ export class CookingPhase {
     const result = this.gauge.judge();
 
     if (result === "success") {
+      // 1回目だけ専用の音、2回目以降は共通の音
+      playSound(this.results.length === 0 ? SOUNDS.flipFirst : SOUNDS.flip);
+
       this.results.push(result);
       this.lastJudgeLabel = "success";
       this.judgeShownAt = elapsedSeconds;
@@ -96,6 +102,7 @@ export class CookingPhase {
       // 1回目の成功から、バウンド演出を入れる
       this.bodyBounceAt = elapsedSeconds;
     } else {
+      playSound(SOUNDS.gameOver);
       this.lastJudgeLabel = "fail";
       this.awaitingRetry = true;
     }
@@ -174,16 +181,29 @@ export class CookingPhase {
     const bodyRadiusX = bodyDrawWidth / 2;
     const bodyRadiusY = bodyDrawHeight / 2;
 
-    // ---- 湯気（画像が無い間は何も描かない） ----
-    if (isReady(STEAM_IMG)) {
-      for (const p of this.steamParticles) {
-        const sx = centerX + p.offsetX * bodyRadiusX * 2;
-        const sy = centerY - bodyRadiusY * 0.6 - p.y;
+    // ---- 湯気（画像があればそちらを、無ければCanvasで柔らかい煙を描く） ----
+    for (const p of this.steamParticles) {
+      const sx = centerX + p.offsetX * bodyRadiusX * 2;
+      const sy = centerY - bodyRadiusY * 0.6 - p.y;
+      const alpha = Math.max(p.alpha, 0);
+
+      if (isReady(STEAM_IMG)) {
         ctx.save();
-        ctx.globalAlpha = Math.max(p.alpha, 0);
+        ctx.globalAlpha = alpha;
         const size = 40 * p.scale;
         ctx.drawImage(STEAM_IMG, sx - size / 2, sy - size / 2, size, size);
         ctx.restore();
+      } else {
+        // 画像が無くても、白いグラデーションの丸を重ねてふわっとした湯気に見せる
+        const radius = 16 * p.scale;
+        const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
+        gradient.addColorStop(0, `rgba(255,255,255,${0.55 * alpha})`);
+        gradient.addColorStop(0.6, `rgba(255,255,255,${0.25 * alpha})`);
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
 

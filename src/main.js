@@ -1,7 +1,12 @@
 import { createGameState, SCENES } from "./game/gameState.js";
 import { CookingPhase } from "./game/cookingPhase.js";
 import { ToppingPhase } from "./game/toppingPhase.js";
-import { loadImage, isReady, resolvePath } from "./game/assets.js";
+import { loadImage, isReady, resolvePath, waitForAllImages } from "./game/assets.js";
+import { playSound, stopSound, unlockAudioOnFirstTap } from "./game/audio.js";
+import { SOUNDS } from "./game/sounds.js";
+
+unlockAudioOnFirstTap();
+let bgmStarted = false;
 
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
@@ -39,6 +44,37 @@ if (screen.orientation && screen.orientation.lock) {
   });
 }
 
+// ---------- ローディング画面 ----------
+function showLoadingUI() {
+  uiLayer.innerHTML = "";
+  const wrap = document.createElement("div");
+  wrap.id = "loading-wrap";
+  wrap.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#fdf6e3;";
+
+  const label = document.createElement("div");
+  label.id = "loading-label";
+  label.textContent = "よみこみちゅう… 0%";
+  label.style.cssText = "font-size:18px;font-weight:bold;color:#5a2d0c;";
+
+  const barOuter = document.createElement("div");
+  barOuter.style.cssText = "width:70%;max-width:280px;height:14px;background:#eee;border-radius:999px;overflow:hidden;";
+  const barInner = document.createElement("div");
+  barInner.id = "loading-bar-inner";
+  barInner.style.cssText = "width:0%;height:100%;background:#ff8a3d;transition:width 0.15s ease-out;";
+  barOuter.appendChild(barInner);
+
+  wrap.append(label, barOuter);
+  uiLayer.appendChild(wrap);
+}
+
+function updateLoadingUI(loaded, total) {
+  const percent = total === 0 ? 100 : Math.floor((loaded / total) * 100);
+  const label = document.getElementById("loading-label");
+  const barInner = document.getElementById("loading-bar-inner");
+  if (label) label.textContent = `よみこみちゅう… ${percent}%`;
+  if (barInner) barInner.style.width = `${percent}%`;
+}
+
 // ---------- UI描画（タイトル画面のみDOM。それ以外はCanvas側で描画する） ----------
 function renderUI() {
   uiLayer.innerHTML = "";
@@ -66,7 +102,14 @@ function renderUI() {
     const startBtn = document.createElement("button");
     startBtn.className = "btn";
     startBtn.textContent = "スタート";
-    startBtn.onclick = startCooking;
+    startBtn.onclick = () => {
+      playSound(SOUNDS.start);
+      if (!bgmStarted) {
+        bgmStarted = true;
+        playSound(SOUNDS.bgm, { loop: true, volume: 0.5 });
+      }
+      startCooking();
+    };
     wrap.append(logoImg, title, startBtn);
     uiLayer.appendChild(wrap);
   }
@@ -96,6 +139,8 @@ function resetGame() {
   state.scene = SCENES.TITLE;
   cookingPhase = null;
   toppingPhase = null;
+  stopSound(SOUNDS.bgm);
+  bgmStarted = false;
   renderUI();
 }
 
@@ -138,5 +183,9 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
-renderUI();
-requestAnimationFrame(loop);
+// ---------- 起動処理：画像が揃うまでローディング画面を表示してから開始 ----------
+showLoadingUI();
+waitForAllImages({ timeoutMs: 10000, onProgress: updateLoadingUI }).then(() => {
+  renderUI();
+  requestAnimationFrame(loop);
+});
