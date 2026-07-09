@@ -1,6 +1,6 @@
 import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
-import { playSound } from "./audio.js";
+import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
 
 export const TOPPING_TYPES = {
@@ -15,8 +15,9 @@ const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
 
 // 「かんせい」の全面イラスト：complete_01.png〜03.png を用意すればランダムで表示される。
-// 1枚だけでも今まで通り動く（枚数を増減したい場合はこの配列を編集する）
 const COMPLETE_IMAGES = ["01", "02", "03"].map((n) => loadImage(`/images/ui/complete_${n}.png`));
+const CHARACTER_A_IMG = loadImage("/images/ui/character_topping_a.png"); // 右上の応援キャラ
+const CHARACTER_B_IMG = loadImage("/images/ui/character_topping_b.png"); // 左下の応援キャラ
 
 const TOPPING_OVERLAY_IMAGES = {
   [TOPPING_TYPES.SAUCE]: loadImage("/images/toppings/topping_sauce.png"),
@@ -40,6 +41,9 @@ const SPARKLE_COLOR = {
   [TOPPING_TYPES.KATSUOBUSHI]: "#ffcf5c",
 };
 
+// 紙吹雪の色（クリア画面でランダムに使う）
+const CONFETTI_COLORS = ["#ff8a3d", "#ffd166", "#8bd17c", "#5eb0ef", "#ff6b9d"];
+
 // 順番に「ソース→マヨネーズ→あおのり→かつおぶし」と進んでいく
 const STEPS = [
   { type: TOPPING_TYPES.SAUCE, prompt: "ソースをぬろう！" },
@@ -48,9 +52,14 @@ const STEPS = [
   { type: TOPPING_TYPES.KATSUOBUSHI, prompt: "かつおぶしをかけよう！" },
 ];
 
-const STEP_PAUSE = 0.5; // 秒。トッピングが乗った後、次のステップ（または完成画面）に進むまでの間
+const STEP_PAUSE = 0.9; // 秒。トッピングが乗った後、次のステップ（または完成画面）に進むまでの間
+const CHARACTER_POP_GROW_DURATION = 0.2; // 秒。応援キャラがポンと出てくるまでの時間（この後は消えずそのまま表示）
 const SPARKLE_LIFETIME = 0.5; // 秒。キラキラ粒子の寿命
 const SPARKLE_COUNT = 14; // 1回のトッピングで飛び散る粒子の数
+const FLASH_DURATION = 0.25; // 秒。トッピングが乗った瞬間の白フラッシュの長さ
+const PERFECT_POP_DURATION = 0.4; // 秒。「パーフェクト！」がポンと出てくるまでの時間
+const PERFECT_HOLD_DURATION = 1.0; // 秒。「パーフェクト！」を表示しておく時間（この後クリア画面に切り替わる）
+const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
 
 export class ToppingPhase {
   /**
@@ -67,9 +76,14 @@ export class ToppingPhase {
       [TOPPING_TYPES.KATSUOBUSHI]: false,
     };
     this.justAppliedAt = null; // タップして乗せた直後の一瞬（次に進むまでの間）
-    this.allDone = false; // 4つとも乗せ終わって「かんせい」画面になったか
+    this.flashAt = null; // 白フラッシュの開始時刻
+    this.allDone = false; // クリア画面（かんせい画像＋紙吹雪）になったか
+    this.showingPerfect = false; // 「パーフェクト！」だけを表示している間（この後allDoneに切り替わる）
+    this.perfectAt = null; // 「パーフェクト！」演出の開始時刻
     this.selectedCompleteImg = null; // 「かんせい」画面用に選ばれた画像（allDoneになった瞬間に1回だけ選ぶ）
     this.sparkles = []; // { angle, speed, age, color, size }
+    this.confetti = []; // { x, y, vx, vy, rotation, rotSpeed, color, size }
+    this._lastConfettiSpawn = 0;
   }
 
   update(deltaSeconds, elapsedSeconds) {
@@ -79,31 +93,72 @@ export class ToppingPhase {
     }
     this.sparkles = this.sparkles.filter((s) => s.age < SPARKLE_LIFETIME);
 
-    if (this.allDone) return;
+    if (this.allDone) {
+      this._updateConfetti(deltaSeconds, elapsedSeconds);
+      return;
+    }
+
+    // 「パーフェクト！」表示中 → 一定時間経ったらクリア画面に切り替える
+    if (this.showingPerfect) {
+      if (elapsedSeconds - this.perfectAt >= PERFECT_HOLD_DURATION) {
+        this.showingPerfect = false;
+        this.allDone = true;
+        this.selectedCompleteImg = pickReadyRandom(COMPLETE_IMAGES);
+      }
+      return;
+    }
+
     if (this.justAppliedAt !== null && elapsedSeconds - this.justAppliedAt >= STEP_PAUSE) {
       this.justAppliedAt = null;
       this.stepIndex += 1;
       if (this.stepIndex >= STEPS.length) {
-        this.allDone = true; // ここで「かんせい」画面へ（一拍置いてから表示される）
-        this.selectedCompleteImg = pickReadyRandom(COMPLETE_IMAGES);
-        playSound(SOUNDS.clear);
+        // まずは「パーフェクト！」だけを表示する（この後クリア画面に切り替わる）
+        this.showingPerfect = true;
+        this.perfectAt = elapsedSeconds;
+        playSfx(SOUNDS.clear);
       }
     }
+  }
+
+  _updateConfetti(deltaSeconds, elapsedSeconds) {
+    if (elapsedSeconds - this._lastConfettiSpawn > CONFETTI_SPAWN_INTERVAL) {
+      this._lastConfettiSpawn = elapsedSeconds;
+      for (let i = 0; i < 3; i++) {
+        this.confetti.push({
+          x: Math.random(), // 0〜1（横位置の割合、描画時にwidthを掛ける）
+          y: -0.05,
+          vx: (Math.random() - 0.5) * 0.15,
+          vy: 0.25 + Math.random() * 0.2,
+          rotation: Math.random() * Math.PI * 2,
+          rotSpeed: (Math.random() - 0.5) * 6,
+          color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+          size: 6 + Math.random() * 5,
+        });
+      }
+    }
+    for (const c of this.confetti) {
+      c.x += c.vx * deltaSeconds;
+      c.y += c.vy * deltaSeconds;
+      c.rotation += c.rotSpeed * deltaSeconds;
+    }
+    this.confetti = this.confetti.filter((c) => c.y < 1.1);
   }
 
   handleTap(elapsedSeconds) {
     if (this.allDone) {
       // 「かんせい」画面をタップ → リトライ（呼び出し側で画面遷移）
-      playSound(SOUNDS.retryTap);
+      playSfx(SOUNDS.retryTap);
       this.onRetry();
       return;
     }
+    if (this.showingPerfect) return; // 「パーフェクト！」表示中はタップ無効
     if (this.justAppliedAt !== null) return;
     if (this.stepIndex >= STEPS.length) return;
     const step = STEPS[this.stepIndex];
-    playSound(SOUNDS.toppingTap);
+    playSfx(SOUNDS.toppingTap);
     this.active[step.type] = true;
     this.justAppliedAt = elapsedSeconds;
+    this.flashAt = elapsedSeconds;
     this._spawnSparkles(step.type);
   }
 
@@ -121,7 +176,7 @@ export class ToppingPhase {
   }
 
   render(ctx, width, height, elapsedSeconds) {
-    // ---- 完成後：全面に「かんせい」イラスト＋下部に「もういちど」 ----
+    // ---- 完成後：全面に「かんせい」イラスト＋紙吹雪＋「パーフェクト！」＋下部に「もういちど」 ----
     if (this.allDone) {
       if (this.selectedCompleteImg && isReady(this.selectedCompleteImg)) {
         const img = this.selectedCompleteImg;
@@ -132,10 +187,16 @@ export class ToppingPhase {
       } else {
         ctx.fillStyle = "#ffdca3";
         ctx.fillRect(0, 0, width, height);
-        ctx.fillStyle = "#5a2d0c";
-        ctx.font = "bold 32px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("かんせい！", width / 2, height / 2);
+      }
+
+      // 紙吹雪（上から降り続ける）
+      for (const c of this.confetti) {
+        ctx.save();
+        ctx.translate(c.x * width, c.y * height);
+        ctx.rotate(c.rotation);
+        ctx.fillStyle = c.color;
+        ctx.fillRect(-c.size / 2, -c.size / 3, c.size, c.size * 0.6);
+        ctx.restore();
       }
 
       // 下部の帯＋「もういちど」の文字
@@ -189,6 +250,26 @@ export class ToppingPhase {
       }
     }
 
+    // ---- 白フラッシュ（トッピングが乗った瞬間、本体あたりがパッと光る） ----
+    if (this.flashAt !== null) {
+      const flashT = elapsedSeconds - this.flashAt;
+      if (flashT < FLASH_DURATION) {
+        const flashAlpha = 1 - flashT / FLASH_DURATION;
+        const flashRadius = w * 0.6;
+        const gradient = ctx.createRadialGradient(bodyCenterX, bodyCenterY, 0, bodyCenterX, bodyCenterY, flashRadius);
+        gradient.addColorStop(0, `rgba(255,255,255,${0.85 * flashAlpha})`);
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.save();
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(bodyCenterX, bodyCenterY, flashRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      } else {
+        this.flashAt = null;
+      }
+    }
+
     // ---- キラキラ粒子（トッピングが乗った瞬間、中心から放射状に飛び散る） ----
     const burstRadius = w * 0.5; // 粒子が飛び散る最大距離の目安
     for (const s of this.sparkles) {
@@ -210,21 +291,98 @@ export class ToppingPhase {
       ctx.restore();
     }
 
+    // ---- 応援キャラ2体：トッピングを乗せた瞬間だけ、右上・左下にポンと同時ポップアップ ----
+    if (this.justAppliedAt !== null) {
+      const growProgress = Math.min((elapsedSeconds - this.justAppliedAt) / CHARACTER_POP_GROW_DURATION, 1);
+      const growScale = Math.sin(growProgress * (Math.PI / 2)); // 0→1（出てきたら止まる、消えない）
+
+      const positions = [
+        { img: CHARACTER_A_IMG, x: width * 0.82, y: height * 0.22 }, // 右上
+        { img: CHARACTER_B_IMG, x: width * 0.18, y: height * 0.8 }, // 左下
+      ];
+
+      for (const { img, x, y } of positions) {
+        if (!isReady(img)) continue;
+        const charH = width * 0.34 * growScale;
+        const charW = charH * (img.naturalWidth / img.naturalHeight);
+        ctx.save();
+        ctx.globalAlpha = growScale;
+        ctx.drawImage(img, x - charW / 2, y - charH / 2, charW, charH);
+        ctx.restore();
+      }
+    }
+
     // 今のステップの案内（トッピング済みの一瞬の間は表示しない）
     if (this.stepIndex < STEPS.length && this.justAppliedAt === null) {
       const step = STEPS[this.stepIndex];
 
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#5a2d0c";
+      // 見出し：背景に帯を敷いて、どんな背景でも読みやすくする
+      ctx.save();
       ctx.font = "bold 24px sans-serif";
-      ctx.fillText(step.prompt, width / 2, height * 0.15);
+      ctx.textAlign = "center";
+      const promptMetrics = ctx.measureText(step.prompt);
+      const barW = promptMetrics.width + 32;
+      const barH = 40;
+      const barY = height * 0.15;
+      ctx.fillStyle = "rgba(90,45,12,0.75)";
+      ctx.beginPath();
+      ctx.roundRect(width / 2 - barW / 2, barY - barH * 0.72, barW, barH, 20);
+      ctx.fill();
+      ctx.fillStyle = "#fff";
+      ctx.fillText(step.prompt, width / 2, barY);
+      ctx.restore();
 
+      // 「タップして」：縁取り＋点滅で見やすく
       const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin((elapsedSeconds * Math.PI * 2) / 1.4));
       ctx.save();
       ctx.globalAlpha = blinkAlpha;
-      ctx.fillStyle = "#e0552b";
+      ctx.textAlign = "center";
       ctx.font = "bold 18px sans-serif";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#fff";
+      ctx.strokeText("タップして", width / 2, height * 0.21);
+      ctx.fillStyle = "#e0552b";
       ctx.fillText("タップして", width / 2, height * 0.21);
+      ctx.restore();
+    }
+
+    // ---- 「パーフェクト！」：クリア画面の前に、これだけを表示する ----
+    if (this.showingPerfect) {
+      const growProgress = Math.min((elapsedSeconds - this.perfectAt) / PERFECT_POP_DURATION, 1);
+      const growScale = Math.sin(growProgress * (Math.PI / 2)); // 0→1
+
+      const perfectY = height * 0.38;
+
+      // 周囲の星（位置固定、明滅だけさせる）
+      const starOffsets = [
+        { dx: -0.28, dy: -0.06, phase: 0 },
+        { dx: 0.3, dy: -0.08, phase: 1.1 },
+        { dx: -0.22, dy: 0.08, phase: 2.2 },
+        { dx: 0.24, dy: 0.09, phase: 3.3 },
+        { dx: 0, dy: -0.12, phase: 4.1 },
+      ];
+      for (const s of starOffsets) {
+        const twinkle = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsedSeconds * 4 + s.phase));
+        ctx.save();
+        ctx.globalAlpha = growScale * twinkle;
+        ctx.fillStyle = "#fff176";
+        ctx.font = `${Math.floor(width * 0.06)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText("★", width / 2 + s.dx * width, perfectY + s.dy * height);
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.globalAlpha = growScale;
+      ctx.translate(width / 2, perfectY);
+      ctx.scale(growScale, growScale);
+      ctx.textAlign = "center";
+      ctx.font = "bold 40px sans-serif";
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = "#5a2d0c";
+      ctx.strokeText("パーフェクト！", 0, 0);
+      ctx.fillStyle = "#ffcf5c";
+      ctx.fillText("パーフェクト！", 0, 0);
       ctx.restore();
     }
   }

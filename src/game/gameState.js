@@ -2,6 +2,8 @@
 export const SCENES = {
   TITLE: "title",
   COOKING: "cooking",
+  ADULT_COOKING: "adult_cooking",
+  ADULT_TOPPING: "adult_topping",
   TOPPING: "topping",
   RESULT: "result",
   GAMEOVER: "gameover",

@@ -1,8 +1,10 @@
 import { createGameState, SCENES } from "./game/gameState.js";
 import { CookingPhase } from "./game/cookingPhase.js";
+import { AdultCookingPhase } from "./game/adultCookingPhase.js";
+import { AdultToppingPhase } from "./game/adultToppingPhase.js";
 import { ToppingPhase } from "./game/toppingPhase.js";
 import { loadImage, isReady, resolvePath, waitForAllImages } from "./game/assets.js";
-import { playSound, stopSound, unlockAudioOnFirstTap } from "./game/audio.js";
+import { playSfx, playMusic, stopMusic, unlockAudioOnFirstTap } from "./game/audio.js";
 import { SOUNDS } from "./game/sounds.js";
 
 unlockAudioOnFirstTap();
@@ -19,6 +21,8 @@ const BACKGROUND_VERTICAL_ANCHOR = 0.75;
 
 const state = createGameState();
 let cookingPhase = null;
+let adultCookingPhase = null;
+let adultToppingPhase = null;
 let toppingPhase = null;
 
 let width = 0;
@@ -99,18 +103,32 @@ function renderUI() {
       logoImg.remove();
     };
 
-    const startBtn = document.createElement("button");
-    startBtn.className = "btn";
-    startBtn.textContent = "スタート";
-    startBtn.onclick = () => {
-      playSound(SOUNDS.start);
+    const simpleBtn = document.createElement("button");
+    simpleBtn.className = "btn";
+    simpleBtn.textContent = "シンプルモード";
+    simpleBtn.onclick = () => {
+      playSfx(SOUNDS.start);
       if (!bgmStarted) {
         bgmStarted = true;
-        playSound(SOUNDS.bgm, { loop: true, volume: 0.5 });
+        playMusic(SOUNDS.bgm, { loop: true, volume: 0.5 });
       }
       startCooking();
     };
-    wrap.append(logoImg, title, startBtn);
+
+    const scoreBtn = document.createElement("button");
+    scoreBtn.className = "btn";
+    scoreBtn.style.cssText = "background:#5a2d0c;box-shadow:0 4px 0 #3a1d08;";
+    scoreBtn.textContent = "スコアモード";
+    scoreBtn.onclick = () => {
+      playSfx(SOUNDS.start);
+      if (!bgmStarted) {
+        bgmStarted = true;
+        playMusic(SOUNDS.bgm, { loop: true, volume: 0.5 });
+      }
+      startAdultCooking();
+    };
+
+    wrap.append(logoImg, title, simpleBtn, scoreBtn);
     uiLayer.appendChild(wrap);
   }
 }
@@ -135,23 +153,66 @@ function startCooking() {
   renderUI();
 }
 
+function startAdultCooking() {
+  state.scene = SCENES.ADULT_COOKING;
+  adultCookingPhase = new AdultCookingPhase({
+    onComplete: () => {
+      state.scene = SCENES.ADULT_TOPPING;
+      adultToppingPhase = new AdultToppingPhase({
+        onFinish: () => {
+          resetGame();
+        },
+      });
+      renderUI();
+    },
+  });
+  renderUI();
+}
+
 function resetGame() {
   state.scene = SCENES.TITLE;
   cookingPhase = null;
+  adultCookingPhase = null;
+  adultToppingPhase = null;
   toppingPhase = null;
-  stopSound(SOUNDS.bgm);
+  stopMusic(SOUNDS.bgm);
   bgmStarted = false;
   renderUI();
 }
 
 // ---------- ポインター操作 ----------
-canvas.addEventListener("pointerdown", () => {
+function getPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+canvas.addEventListener("pointerdown", (e) => {
   const t = performance.now() / 1000;
   if (state.scene === SCENES.COOKING && cookingPhase) {
     cookingPhase.handleTap(t);
+  } else if (state.scene === SCENES.ADULT_COOKING && adultCookingPhase) {
+    adultCookingPhase.handleTap(t);
+  } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
+    const { x, y } = getPos(e);
+    adultToppingPhase.handleTap(t);
+    adultToppingPhase.handlePointerDown(x, y, t, width, height);
   } else if (state.scene === SCENES.TOPPING && toppingPhase) {
     toppingPhase.handleTap(t);
   }
+});
+
+canvas.addEventListener("pointermove", (e) => {
+  if (state.scene !== SCENES.ADULT_TOPPING || !adultToppingPhase) return;
+  const t = performance.now() / 1000;
+  const { x, y } = getPos(e);
+  adultToppingPhase.handlePointerMove(x, y, t, width, height);
+});
+
+canvas.addEventListener("pointerup", (e) => {
+  if (state.scene !== SCENES.ADULT_TOPPING || !adultToppingPhase) return;
+  const t = performance.now() / 1000;
+  const { x, y } = getPos(e);
+  adultToppingPhase.handlePointerUp(x, y, t);
 });
 
 // ---------- メインループ ----------
@@ -175,6 +236,12 @@ function loop(now) {
   if (state.scene === SCENES.COOKING && cookingPhase) {
     cookingPhase.update(deltaSeconds, elapsedSeconds);
     cookingPhase.render(ctx, width, height, elapsedSeconds);
+  } else if (state.scene === SCENES.ADULT_COOKING && adultCookingPhase) {
+    adultCookingPhase.update(deltaSeconds, elapsedSeconds);
+    adultCookingPhase.render(ctx, width, height, elapsedSeconds);
+  } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
+    adultToppingPhase.update(deltaSeconds, elapsedSeconds);
+    adultToppingPhase.render(ctx, width, height, elapsedSeconds);
   } else if (state.scene === SCENES.TOPPING && toppingPhase) {
     toppingPhase.update(deltaSeconds, elapsedSeconds);
     toppingPhase.render(ctx, width, height, elapsedSeconds);

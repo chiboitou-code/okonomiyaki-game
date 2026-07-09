@@ -1,16 +1,19 @@
 import { TimingGauge } from "./gauge.js";
 import { loadImage, isReady } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
-import { playSound } from "./audio.js";
+import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
 
 const TOTAL_FLIPS = 4;
 const BODY_BOUNCE_DURATION = 0.4; // 秒。バウンド演出の長さ
+const SUCCESS_DISPLAY_DURATION = 0.9; // 秒。成功演出（文字・星・キャラ）を表示しておく時間
+const CHARACTER_POP_GROW_DURATION = 0.2; // 秒。キャラがポンと出てくるまでの時間（この後は縮小せずそのまま表示）
 
 // ---- 画像パス設定 ----
 const SPATULA_IMG = loadImage("/images/ui/spatula.png");
 const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
 const STAR_IMG = loadImage("/images/ui/star_effect.png");
+const CHARACTER_IMG = loadImage("/images/ui/character_cooking.png"); // 応援キャラ（ひっくり返すフェーズの吹き出し用）
 const NEEDLE_IMG = loadImage("/images/ui/gauge_needle.png");
 const FAIL_IMG = loadImage("/images/okonomiyaki/body_fail.png");
 
@@ -28,7 +31,7 @@ export class CookingPhase {
     this.onFail = onFail;
     this.flipIndex = 0;
     this.results = [];
-    this.gauge = new TimingGauge({ speed: 0.55, zoneWidth: 0.35 });
+    this.gauge = new TimingGauge({ speed: 0.4, zoneWidth: 0.35 });
     this.lastJudgeLabel = null;
     this.judgeShownAt = 0;
     this.finished = false;
@@ -46,11 +49,11 @@ export class CookingPhase {
 
     if (this.finished) return;
 
-    if (this.lastJudgeLabel === "success" && elapsedSeconds - this.judgeShownAt < 0.6) {
+    if (this.lastJudgeLabel === "success" && elapsedSeconds - this.judgeShownAt < SUCCESS_DISPLAY_DURATION) {
       return;
     }
 
-    if (this.lastJudgeLabel === "success" && elapsedSeconds - this.judgeShownAt >= 0.6) {
+    if (this.lastJudgeLabel === "success" && elapsedSeconds - this.judgeShownAt >= SUCCESS_DISPLAY_DURATION) {
       this.lastJudgeLabel = null;
       this.flipIndex += 1;
       if (this.flipIndex >= TOTAL_FLIPS) {
@@ -58,32 +61,36 @@ export class CookingPhase {
         this.onComplete(this.results);
         return;
       }
-      this.gauge = new TimingGauge({ speed: 0.55 + this.flipIndex * 0.05, zoneWidth: 0.35 });
+      this.gauge = new TimingGauge({ speed: 0.4 + this.flipIndex * 0.03, zoneWidth: 0.35 });
     }
 
     this.gauge.update(deltaSeconds);
   }
 
   _updateSteam(deltaSeconds, elapsedSeconds) {
-    if (elapsedSeconds - this._lastSteamSpawn > 0.5) {
+    if (elapsedSeconds - this._lastSteamSpawn > 0.25) {
       this._lastSteamSpawn = elapsedSeconds;
-      this.steamParticles.push({
-        offsetX: (Math.random() - 0.5) * 0.5,
-        y: 0,
-        alpha: 0.8,
-        scale: 0.6 + Math.random() * 0.4,
-      });
+      // 1回の発生で複数個まとめて出す（量を増やして派手にする）
+      const spawnCount = 2 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < spawnCount; i++) {
+        this.steamParticles.push({
+          offsetX: (Math.random() - 0.5) * 0.7,
+          y: 0,
+          alpha: 0.9,
+          scale: 0.8 + Math.random() * 0.6,
+        });
+      }
     }
     for (const p of this.steamParticles) {
-      p.y += deltaSeconds * 40;
-      p.alpha -= deltaSeconds * 0.5;
+      p.y += deltaSeconds * 55;
+      p.alpha -= deltaSeconds * 0.4;
     }
     this.steamParticles = this.steamParticles.filter((p) => p.alpha > 0);
   }
 
   handleTap(elapsedSeconds) {
     if (this.awaitingRetry) {
-      playSound(SOUNDS.retryTap);
+      playSfx(SOUNDS.retryTap);
       this.onFail();
       return;
     }
@@ -93,7 +100,7 @@ export class CookingPhase {
 
     if (result === "success") {
       // 1回目だけ専用の音、2回目以降は共通の音
-      playSound(this.results.length === 0 ? SOUNDS.flipFirst : SOUNDS.flip);
+      playSfx(this.results.length === 0 ? SOUNDS.flipFirst : SOUNDS.flip);
 
       this.results.push(result);
       this.lastJudgeLabel = "success";
@@ -102,7 +109,7 @@ export class CookingPhase {
       // 1回目の成功から、バウンド演出を入れる
       this.bodyBounceAt = elapsedSeconds;
     } else {
-      playSound(SOUNDS.gameOver);
+      playSfx(SOUNDS.gameOver);
       this.lastJudgeLabel = "fail";
       this.awaitingRetry = true;
     }
@@ -195,7 +202,7 @@ export class CookingPhase {
         ctx.restore();
       } else {
         // 画像が無くても、白いグラデーションの丸を重ねてふわっとした湯気に見せる
-        const radius = 16 * p.scale;
+        const radius = 24 * p.scale;
         const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
         gradient.addColorStop(0, `rgba(255,255,255,${0.55 * alpha})`);
         gradient.addColorStop(0.6, `rgba(255,255,255,${0.25 * alpha})`);
@@ -246,10 +253,6 @@ export class CookingPhase {
     ctx.restore();
 
     if (this.lastJudgeLabel === "success") {
-      ctx.fillStyle = "#e0552b";
-      ctx.font = "bold 28px sans-serif";
-      ctx.fillText("せいこう！", width / 2, height * 0.3);
-
       const t = Math.min((elapsedSeconds - this.judgeShownAt) / 0.6, 1);
       const scale = 0.6 + t * 0.6;
       const alpha = 1 - t * 0.5;
@@ -260,6 +263,22 @@ export class CookingPhase {
         ctx.drawImage(STAR_IMG, width / 2 - size / 2, height * 0.32, size, size);
         ctx.restore();
       }
+
+      // 応援キャラ：中央上あたりにポンと出てきて、そのままキープ（フェードや縮小はしない）
+      if (isReady(CHARACTER_IMG)) {
+        const growProgress = Math.min((elapsedSeconds - this.judgeShownAt) / CHARACTER_POP_GROW_DURATION, 1);
+        const growScale = Math.sin(growProgress * (Math.PI / 2)); // 0→1（出てきたら止まる、消えない）
+        const charCenterX = width * 0.5;
+        const charCenterY = height * 0.28;
+        const charH = width * 0.4 * growScale;
+        const charW = charH * (CHARACTER_IMG.naturalWidth / CHARACTER_IMG.naturalHeight);
+
+        ctx.save();
+        ctx.globalAlpha = growScale;
+        ctx.drawImage(CHARACTER_IMG, charCenterX - charW / 2, charCenterY - charH / 2, charW, charH);
+        ctx.restore();
+      }
+
       return;
     }
 
