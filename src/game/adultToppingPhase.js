@@ -2,22 +2,28 @@ import { loadImage, isReady } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
+import gsap from "gsap";
 
 // ---- 調整用の定数 ----
-const TRACE_TIME_LIMIT = 3.0; // 秒。なぞり切るまでの制限時間
-const MAX_ACCEPTABLE_DEVIATION_RATIO = 0.12; // 本体幅に対する「これ以上ズレたら0点」の許容ズレ
+const SAUCE_TIME_LIMIT = 4.0; // 秒。ソース（ジグザグ）の制限時間
+const MAYO_TIME_LIMIT = 5.0; // 秒。マヨネーズ（急カーブ連続）の制限時間
+const SAUCE_MAX_DEVIATION_RATIO = 0.13; // 本体幅に対する「これ以上ズレたら0点」の許容ズレ
+const MAYO_MAX_DEVIATION_RATIO = 0.1; // マヨネーズはより厳しめ
 const RESULT_PAUSE = 1.2; // 秒。結果表示の時間
-const SCORE_BOUNCE_DURATION = 0.35;
 
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
 const SAUCE_APPLIED_IMG = loadImage("/images/toppings/topping_sauce.png");
+const MAYO_APPLIED_IMG = loadImage("/images/toppings/topping_mayo.png");
 
 const STAGE = {
   EXPLAIN_SAUCE: "explain_sauce",
   SAUCE_TRACE: "sauce_trace",
   SAUCE_RESULT: "sauce_result",
-  STUB_END: "stub_end", // マヨネーズ以降は実装中のため、いったんここで止める
+  EXPLAIN_MAYO: "explain_mayo",
+  MAYO_TRACE: "mayo_trace",
+  MAYO_RESULT: "mayo_result",
+  STUB_END: "stub_end", // あおのり・かつおぶしは実装中のため、いったんここで止める
 };
 
 export class AdultToppingPhase {
@@ -25,14 +31,19 @@ export class AdultToppingPhase {
    * @param {object} opts
    * @param {() => void} opts.onFinish - 一連の流れが終わった時（呼び出し側でタイトル等に戻す）
    */
-  constructor({ onFinish }) {
+  /**
+   * @param {object} opts
+   * @param {() => void} opts.onFinish - 一連の流れが終わった時（呼び出し側でタイトル等に戻す）
+   * @param {number} [opts.initialScore] - それ以前のフェーズ（ひっくり返すフェーズ等）からの持ち越しスコア
+   */
+  constructor({ onFinish, initialScore = 0 }) {
     this.onFinish = onFinish;
     this.stage = STAGE.EXPLAIN_SAUCE;
     this.stageEnteredAt = performance.now() / 1000;
 
-    this.totalScore = 0;
+    this.totalScore = initialScore;
     this.lastScore = 0;
-    this.scoreBounceAt = null;
+    this.scoreBounce = { scale: 1, flash: 0 }; // GSAPで動かす値。render側はこれをそのまま読むだけ
 
     // なぞり用の状態
     this.tracing = false;
@@ -40,6 +51,9 @@ export class AdultToppingPhase {
     this.deviationSum = 0;
     this.deviationCount = 0;
     this.maxProgress = 0; // これまでに到達した最大の進捗（0〜1）
+    this.currentPathPoints = null;
+    this._lastWidth = 400;
+    this.tracePathHistory = []; // なぞった軌跡（光る帯の描画用）
   }
 
   _enterStage(stage, elapsedSeconds) {
@@ -47,30 +61,94 @@ export class AdultToppingPhase {
     this.stageEnteredAt = elapsedSeconds;
   }
 
-  // ソースのお手本ルート（本体の中心を通る横一直線。左端〜右端）
-  _getSaucePath(width, height) {
-    const bodyCenterX = width / 2;
-    const bodyCenterY = height * BODY_CENTER_Y_RATIO;
-    const w = width * BODY_WIDTH_RATIO;
-    return {
-      start: { x: bodyCenterX - w * 0.32, y: bodyCenterY },
-      end: { x: bodyCenterX + w * 0.32, y: bodyCenterY },
-    };
+  // ---- パス生成 ----
+  // ソース：鋭角のジグザグ（迷路風）。画面の横幅をほぼ使い切り、折れ数も増やして難化
+  _getSaucePathPoints(width, height) {
+    const cy = height * BODY_CENTER_Y_RATIO;
+    const amp = height * 0.09; // 縦方向の振れ幅（広め）
+    const xStart = width * 0.1;
+    const xEnd = width * 0.9;
+    const SEGMENTS = 9; // 折れ数を増やして（6→9）より細かいジグザグに
+    const points = [];
+    for (let i = 0; i <= SEGMENTS; i++) {
+      const t = i / SEGMENTS;
+      const x = xStart + (xEnd - xStart) * t;
+      const y = cy + (i % 2 === 0 ? 0 : i % 4 === 1 ? -amp : amp);
+      points.push({ x, y });
+    }
+    return points;
+  }
+
+  // マヨネーズ：急カーブが連続する曲線。画面いっぱいを使い、振幅・頻度をさらに上げて高難易度に
+  _getMayoPathPoints(width, height) {
+    const cy = height * BODY_CENTER_Y_RATIO;
+    const amp = height * 0.13; // ソースより振れ幅を大きく
+    const frequency = 4.5; // カーブの数をさらに増やす（2.5→4.5）
+    const xStart = width * 0.06;
+    const xEnd = width * 0.94;
+    const points = [];
+    const SAMPLE_COUNT = 70; // サンプル数を増やして曲線をより滑らか＆精密に
+    for (let i = 0; i <= SAMPLE_COUNT; i++) {
+      const t = i / SAMPLE_COUNT;
+      const x = xStart + (xEnd - xStart) * t;
+      const y = cy + amp * Math.sin(t * frequency * Math.PI * 2);
+      points.push({ x, y });
+    }
+    return points;
+  }
+
+  // 複数の線分（折れ線/曲線サンプル点）に対して、点(x,y)から最も近い位置と、
+  // パス全体に対する進捗割合（0〜1）を求める
+  _projectOntoPolyline(x, y, points) {
+    let totalLength = 0;
+    const segLengths = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const len = Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y);
+      segLengths.push(len);
+      totalLength += len;
+    }
+
+    let bestDeviation = Infinity;
+    let bestProgressLength = 0;
+    let cumulative = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i];
+      const b = points[i + 1];
+      const segLen = segLengths[i];
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const lenSq = abx * abx + aby * aby;
+      const t = lenSq > 0 ? Math.max(0, Math.min(((x - a.x) * abx + (y - a.y) * aby) / lenSq, 1)) : 0;
+      const closestX = a.x + abx * t;
+      const closestY = a.y + aby * t;
+      const deviation = Math.hypot(x - closestX, y - closestY);
+      if (deviation < bestDeviation) {
+        bestDeviation = deviation;
+        bestProgressLength = cumulative + segLen * t;
+      }
+      cumulative += segLen;
+    }
+
+    const progress = totalLength > 0 ? bestProgressLength / totalLength : 0;
+    return { progress, deviation: bestDeviation };
   }
 
   update(deltaSeconds, elapsedSeconds) {
-    if (this.stage === STAGE.SAUCE_TRACE && this.tracing) {
+    if ((this.stage === STAGE.SAUCE_TRACE || this.stage === STAGE.MAYO_TRACE) && this.tracing) {
+      const limit = this.stage === STAGE.SAUCE_TRACE ? SAUCE_TIME_LIMIT : MAYO_TIME_LIMIT;
       const elapsed = elapsedSeconds - this.traceStartedAt;
-      if (elapsed >= TRACE_TIME_LIMIT) {
+      if (elapsed >= limit) {
         this._finishTrace(elapsedSeconds, false);
       }
     }
 
-    if (this.stage === STAGE.SAUCE_RESULT) {
-      if (elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
-        // 現時点ではマヨネーズ以降が未実装のため、いったんここで終了させる
-        this._enterStage(STAGE.STUB_END, elapsedSeconds);
-      }
+    if (this.stage === STAGE.SAUCE_RESULT && elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
+      this._enterStage(STAGE.EXPLAIN_MAYO, elapsedSeconds);
+    }
+
+    if (this.stage === STAGE.MAYO_RESULT && elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
+      // 現時点ではあおのり・かつおぶしが未実装のため、いったんここで終了させる
+      this._enterStage(STAGE.STUB_END, elapsedSeconds);
     }
   }
 
@@ -81,6 +159,11 @@ export class AdultToppingPhase {
       this._enterStage(STAGE.SAUCE_TRACE, elapsedSeconds);
       return;
     }
+    if (this.stage === STAGE.EXPLAIN_MAYO) {
+      playSfx(SOUNDS.start);
+      this._enterStage(STAGE.MAYO_TRACE, elapsedSeconds);
+      return;
+    }
     if (this.stage === STAGE.STUB_END) {
       this.onFinish();
       return;
@@ -89,26 +172,33 @@ export class AdultToppingPhase {
 
   // ---- なぞり操作（ドラッグ） ----
   handlePointerDown(x, y, elapsedSeconds, width, height) {
-    if (this.stage !== STAGE.SAUCE_TRACE || this.tracing) return;
+    if (this.stage !== STAGE.SAUCE_TRACE && this.stage !== STAGE.MAYO_TRACE) return;
+    if (this.tracing) return;
     this._lastWidth = width;
-    const path = this._getSaucePath(width, height);
-    const startDist = Math.hypot(x - path.start.x, y - path.start.y);
-    const grabRadius = width * 0.12; // 始点からこの範囲内でつかめば「開始」とみなす
+
+    const points = this.stage === STAGE.SAUCE_TRACE ? this._getSaucePathPoints(width, height) : this._getMayoPathPoints(width, height);
+    const startPoint = points[0];
+    const startDist = Math.hypot(x - startPoint.x, y - startPoint.y);
+    const grabRadius = width * 0.12;
     if (startDist <= grabRadius) {
+      this.currentPathPoints = points;
       this.tracing = true;
       this.traceStartedAt = elapsedSeconds;
       this.deviationSum = 0;
       this.deviationCount = 0;
       this.maxProgress = 0;
+      this.tracePathHistory = [{ x, y }];
     }
   }
 
   handlePointerMove(x, y, elapsedSeconds, width, height) {
-    if (this.stage !== STAGE.SAUCE_TRACE || !this.tracing) return;
+    if (this.stage !== STAGE.SAUCE_TRACE && this.stage !== STAGE.MAYO_TRACE) return;
+    if (!this.tracing) return;
     this._lastWidth = width;
-    const path = this._getSaucePath(width, height);
-    const { progress, deviation } = this._projectOntoPath(x, y, path);
 
+    this.tracePathHistory.push({ x, y });
+
+    const { progress, deviation } = this._projectOntoPolyline(x, y, this.currentPathPoints);
     this.deviationSum += deviation;
     this.deviationCount += 1;
     this.maxProgress = Math.max(this.maxProgress, progress);
@@ -119,29 +209,26 @@ export class AdultToppingPhase {
   }
 
   handlePointerUp(x, y, elapsedSeconds) {
-    if (this.stage !== STAGE.SAUCE_TRACE || !this.tracing) return;
-    // 終点まで届かないままリリースした場合も、その時点の進捗で判定する
+    if (this.stage !== STAGE.SAUCE_TRACE && this.stage !== STAGE.MAYO_TRACE) return;
+    if (!this.tracing) return;
     this._finishTrace(elapsedSeconds, false);
   }
 
-  _projectOntoPath(x, y, path) {
-    const lineX = path.end.x - path.start.x;
-    const lineY = path.end.y - path.start.y;
-    const lineLenSq = lineX * lineX + lineY * lineY;
-    const px = x - path.start.x;
-    const py = y - path.start.y;
-    const rawT = (px * lineX + py * lineY) / lineLenSq;
-    const t = Math.max(0, Math.min(rawT, 1));
-    const closestX = path.start.x + lineX * t;
-    const closestY = path.start.y + lineY * t;
-    const deviation = Math.hypot(x - closestX, y - closestY);
-    return { progress: t, deviation };
+  // 点数が入った時に、GSAPで弾力のあるバウンド＋色フラッシュをさせる
+  _bounceScore() {
+    gsap.killTweensOf(this.scoreBounce);
+    gsap.timeline()
+      .to(this.scoreBounce, { scale: 1.7, flash: 1, duration: 0.12, ease: "back.out(3)" })
+      .to(this.scoreBounce, { scale: 1, duration: 0.6, ease: "elastic.out(1.2, 0.25)" }, "<")
+      .to(this.scoreBounce, { flash: 0, duration: 0.4, ease: "power1.out" }, "<0.1");
   }
 
   _finishTrace(elapsedSeconds, reachedEnd) {
     this.tracing = false;
+    const isMayo = this.stage === STAGE.MAYO_TRACE;
     const avgDeviation = this.deviationCount > 0 ? this.deviationSum / this.deviationCount : 0;
-    const maxAcceptable = (this._lastWidth || 400) * MAX_ACCEPTABLE_DEVIATION_RATIO;
+    const maxDeviationRatio = isMayo ? MAYO_MAX_DEVIATION_RATIO : SAUCE_MAX_DEVIATION_RATIO;
+    const maxAcceptable = this._lastWidth * maxDeviationRatio;
     const deviationRatio = Math.min(avgDeviation / Math.max(maxAcceptable, 1), 1);
     const accuracyFactor = 1 - deviationRatio;
 
@@ -149,15 +236,14 @@ export class AdultToppingPhase {
     if (reachedEnd) {
       score = Math.round(100 * accuracyFactor);
     } else {
-      // 時間切れ／途中離脱：到達した進捗分だけの部分点
       score = Math.round(100 * this.maxProgress * accuracyFactor);
     }
 
     this.lastScore = score;
     this.totalScore += score;
-    this.scoreBounceAt = elapsedSeconds;
+    this._bounceScore();
     playSfx(reachedEnd ? SOUNDS.clear : SOUNDS.toppingTap);
-    this._enterStage(STAGE.SAUCE_RESULT, elapsedSeconds);
+    this._enterStage(isMayo ? STAGE.MAYO_RESULT : STAGE.SAUCE_RESULT, elapsedSeconds);
   }
 
   render(ctx, width, height, elapsedSeconds) {
@@ -171,9 +257,14 @@ export class AdultToppingPhase {
       const ph = pw * (PLATE_IMG.naturalHeight / PLATE_IMG.naturalWidth);
       ctx.drawImage(PLATE_IMG, bodyCenterX - pw / 2, bodyCenterY - ph / 2 + ph * 0.08, pw, ph);
     }
+
     let bodyH = w;
-    const showSauceApplied = this.stage === STAGE.SAUCE_RESULT || this.stage === STAGE.STUB_END;
-    const bodyImg = showSauceApplied && isReady(SAUCE_APPLIED_IMG) ? SAUCE_APPLIED_IMG : COOKED_BODY_IMG;
+    let bodyImg = COOKED_BODY_IMG;
+    if (this.stage === STAGE.MAYO_TRACE || this.stage === STAGE.MAYO_RESULT || this.stage === STAGE.STUB_END) {
+      if (isReady(MAYO_APPLIED_IMG)) bodyImg = MAYO_APPLIED_IMG;
+    } else if (this.stage === STAGE.SAUCE_RESULT || this.stage === STAGE.EXPLAIN_MAYO) {
+      if (isReady(SAUCE_APPLIED_IMG)) bodyImg = SAUCE_APPLIED_IMG;
+    }
     if (isReady(bodyImg)) {
       bodyH = w * (bodyImg.naturalHeight / bodyImg.naturalWidth);
       ctx.drawImage(bodyImg, bodyCenterX - w / 2, bodyCenterY - bodyH / 2, w, bodyH);
@@ -187,61 +278,108 @@ export class AdultToppingPhase {
 
     if (this.stage === STAGE.EXPLAIN_SAUCE) {
       this._renderExplain(ctx, width, height, "ソースなぞりゲーム", [
-        "表示されるラインの通りに",
-        "できるだけまっすぐなぞろう！",
-        `制限時間 ${TRACE_TIME_LIMIT} 秒`,
+        "ジグザグのルートを",
+        "正確になぞろう！",
+        `制限時間 ${SAUCE_TIME_LIMIT} 秒`,
       ]);
     }
 
-    if (this.stage === STAGE.SAUCE_TRACE) {
-      const path = this._getSaucePath(width, height);
+    if (this.stage === STAGE.EXPLAIN_MAYO) {
+      this._renderExplain(ctx, width, height, "マヨネーズなぞりゲーム", [
+        "急カーブが連続する",
+        "むずかしいルートだよ！",
+        `制限時間 ${MAYO_TIME_LIMIT} 秒`,
+      ]);
+    }
+
+    if (this.stage === STAGE.SAUCE_TRACE || this.stage === STAGE.MAYO_TRACE) {
+      const points = this.stage === STAGE.SAUCE_TRACE ? this._getSaucePathPoints(width, height) : this._getMayoPathPoints(width, height);
+      const limit = this.stage === STAGE.SAUCE_TRACE ? SAUCE_TIME_LIMIT : MAYO_TIME_LIMIT;
+
+      // 画面全体を暗転させて、ルート・軌跡だけがくっきり見えるようにする
       ctx.save();
-      ctx.strokeStyle = "rgba(90,45,12,0.5)";
-      ctx.lineWidth = 4;
-      ctx.setLineDash([10, 8]);
+      ctx.fillStyle = "rgba(0,0,0,0.68)";
+      ctx.fillRect(0, 0, width, height);
+      ctx.restore();
+
+      // お手本ルート（明るい白線＋グロー）
+      ctx.save();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 5;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.setLineDash([12, 10]);
+      ctx.shadowColor = "#fff";
+      ctx.shadowBlur = 10;
       ctx.beginPath();
-      ctx.moveTo(path.start.x, path.start.y);
-      ctx.lineTo(path.end.x, path.end.y);
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
       ctx.stroke();
       ctx.restore();
 
-      // 始点・終点マーク
+      // なぞった軌跡（光る帯）
+      if (this.tracePathHistory.length > 1) {
+        ctx.save();
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 8;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.shadowColor = "#ffd166";
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        ctx.moveTo(this.tracePathHistory[0].x, this.tracePathHistory[0].y);
+        for (let i = 1; i < this.tracePathHistory.length; i++) {
+          ctx.lineTo(this.tracePathHistory[i].x, this.tracePathHistory[i].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // 始点・終点マーク（大きめ・光らせる）
+      const startPulse = 1 + 0.15 * Math.sin(elapsedSeconds * 5);
+      ctx.save();
+      ctx.shadowColor = this.tracing ? "#4caf50" : "#ff8a3d";
+      ctx.shadowBlur = 18;
       ctx.fillStyle = this.tracing ? "#4caf50" : "#ff8a3d";
       ctx.beginPath();
-      ctx.arc(path.start.x, path.start.y, 14, 0, Math.PI * 2);
+      ctx.arc(points[0].x, points[0].y, 16 * (this.tracing ? 1 : startPulse), 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
+
+      ctx.save();
+      ctx.shadowColor = "#e53935";
+      ctx.shadowBlur = 14;
       ctx.fillStyle = "#e53935";
       ctx.beginPath();
-      ctx.arc(path.end.x, path.end.y, 10, 0, Math.PI * 2);
+      ctx.arc(points[points.length - 1].x, points[points.length - 1].y, 12, 0, Math.PI * 2);
       ctx.fill();
+      ctx.restore();
 
       if (!this.tracing) {
         ctx.save();
         ctx.textAlign = "center";
         ctx.font = "bold 16px sans-serif";
-        ctx.fillStyle = "#5a2d0c";
+        ctx.fillStyle = "#fff";
         ctx.fillText("オレンジの点からなぞりはじめよう", width / 2, height * 0.15);
         ctx.restore();
       } else {
-        const remaining = Math.max(TRACE_TIME_LIMIT - (elapsedSeconds - this.traceStartedAt), 0);
+        const remaining = Math.max(limit - (elapsedSeconds - this.traceStartedAt), 0);
         ctx.save();
         ctx.textAlign = "center";
         ctx.font = "bold 24px sans-serif";
-        ctx.fillStyle = remaining < 1 ? "#e53935" : "#5a2d0c";
+        ctx.fillStyle = remaining < 1 ? "#ff8a80" : "#fff";
         ctx.fillText(remaining.toFixed(1), width / 2, height * 0.15);
         ctx.restore();
       }
     }
 
     if (this.stage === STAGE.SAUCE_RESULT) {
-      ctx.save();
-      ctx.textAlign = "center";
-      ctx.fillStyle = "#e0552b";
-      ctx.font = "bold 22px sans-serif";
-      ctx.fillText("ソース", width / 2, height * 0.65);
-      ctx.font = "bold 42px sans-serif";
-      ctx.fillText(`${this.lastScore} 点`, width / 2, height * 0.74);
-      ctx.restore();
+      this._renderScorePopup(ctx, width, height, "ソース", this.lastScore);
+    }
+    if (this.stage === STAGE.MAYO_RESULT) {
+      this._renderScorePopup(ctx, width, height, "マヨネーズ", this.lastScore);
     }
 
     if (this.stage === STAGE.STUB_END) {
@@ -251,7 +389,7 @@ export class AdultToppingPhase {
       ctx.textAlign = "center";
       ctx.fillStyle = "#fff";
       ctx.font = "bold 20px sans-serif";
-      ctx.fillText("マヨネーズ・あおのり・かつおぶしは", width / 2, height * 0.7);
+      ctx.fillText("あおのり・かつおぶしは", width / 2, height * 0.7);
       ctx.fillText("じゅんび中！つづきをおたのしみに", width / 2, height * 0.75);
       ctx.font = "bold 16px sans-serif";
       ctx.fillStyle = "#ffcf5c";
@@ -259,18 +397,7 @@ export class AdultToppingPhase {
       ctx.restore();
     }
 
-    // ---- 合計スコア（大きく、加算時にバウンド） ----
-    let scoreBounceScale = 1;
-    if (this.scoreBounceAt !== null) {
-      const t = elapsedSeconds - this.scoreBounceAt;
-      if (t < SCORE_BOUNCE_DURATION) {
-        const progress = t / SCORE_BOUNCE_DURATION;
-        scoreBounceScale = 1 + 0.35 * Math.sin(progress * Math.PI);
-      } else {
-        this.scoreBounceAt = null;
-      }
-    }
-
+    // ---- 合計スコア（大きく、加算時にGSAPで弾力のあるバウンド） ----
     ctx.save();
     const scoreText = `${this.totalScore} 点`;
     ctx.font = "bold 30px sans-serif";
@@ -280,16 +407,31 @@ export class AdultToppingPhase {
     const scoreBarH = 46;
     const scoreRightX = width - 16;
     const scoreTopY = 14;
-    ctx.fillStyle = "rgba(90,45,12,0.8)";
+    const flash = this.scoreBounce.flash;
+    const bgR = Math.round(90 + (255 - 90) * flash);
+    const bgG = Math.round(45 + (207 - 45) * flash);
+    const bgB = Math.round(12 + (92 - 12) * flash);
+    ctx.fillStyle = `rgba(${bgR},${bgG},${bgB},0.9)`;
     ctx.beginPath();
     ctx.roundRect(scoreRightX - scoreBarW, scoreTopY, scoreBarW, scoreBarH, 14);
     ctx.fill();
 
     ctx.translate(scoreRightX - scoreBarW / 2, scoreTopY + scoreBarH / 2 + 10);
-    ctx.scale(scoreBounceScale, scoreBounceScale);
+    ctx.scale(this.scoreBounce.scale, this.scoreBounce.scale);
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffcf5c";
     ctx.fillText(scoreText, 0, 0);
+    ctx.restore();
+  }
+
+  _renderScorePopup(ctx, width, height, label, score) {
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#e0552b";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText(label, width / 2, height * 0.65);
+    ctx.font = "bold 42px sans-serif";
+    ctx.fillText(`${score} 点`, width / 2, height * 0.74);
     ctx.restore();
   }
 

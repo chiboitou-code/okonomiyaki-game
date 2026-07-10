@@ -19,21 +19,6 @@ const BACKGROUND_IMG = loadImage("/images/ui/background_kitchen.png");
 // 背景の縦位置調整：0=画像の上端を画面上端に合わせる／1=画像の下端を画面下端に合わせる／0.5=中央
 const BACKGROUND_VERTICAL_ANCHOR = 0.75;
 
-// クッキングフェーズで使用する画像を事前に読み込み
-const SPATULA_IMG = loadImage("/images/ui/spatula.png");
-const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
-const STAR_IMG = loadImage("/images/ui/star_effect.png");
-const CHARACTER_IMG = loadImage("/images/ui/character_cooking.png");
-const NEEDLE_IMG = loadImage("/images/ui/gauge_needle.png");
-const FAIL_IMG = loadImage("/images/okonomiyaki/body_fail.png");
-const BODY_IMAGES = [
-  loadImage("/images/okonomiyaki/body_00_raw.png"),
-  loadImage("/images/okonomiyaki/body_01_backside.png"),
-  loadImage("/images/okonomiyaki/body_02_porkside.png"),
-  loadImage("/images/okonomiyaki/body_03_backside.png"),
-  loadImage("/images/okonomiyaki/body_04_porkside.png"),
-];
-
 const state = createGameState();
 let cookingPhase = null;
 let adultCookingPhase = null;
@@ -171,9 +156,10 @@ function startCooking() {
 function startAdultCooking() {
   state.scene = SCENES.ADULT_COOKING;
   adultCookingPhase = new AdultCookingPhase({
-    onComplete: () => {
+    onComplete: (cookingScore) => {
       state.scene = SCENES.ADULT_TOPPING;
       adultToppingPhase = new AdultToppingPhase({
+        initialScore: cookingScore,
         onFinish: () => {
           resetGame();
         },
@@ -267,7 +253,7 @@ function loop(now) {
 
 // ---------- 起動処理：画像が揃うまでローディング画面を表示してから開始 ----------
 showLoadingUI();
-waitForAllImages({ timeoutMs: 20000, onProgress: updateLoadingUI }).then(() => {
+waitForAllImages({ timeoutMs: 10000, onProgress: updateLoadingUI }).then(() => {
   renderUI();
   requestAnimationFrame(loop);
 });

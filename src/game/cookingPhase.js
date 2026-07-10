@@ -3,9 +3,9 @@ import { loadImage, isReady } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
+import gsap from "gsap";
 
 const TOTAL_FLIPS = 4;
-const BODY_BOUNCE_DURATION = 0.4; // 秒。バウンド演出の長さ
 const SUCCESS_DISPLAY_DURATION = 0.9; // 秒。成功演出（文字・星・キャラ）を表示しておく時間
 const CHARACTER_POP_GROW_DURATION = 0.2; // 秒。キャラがポンと出てくるまでの時間（この後は縮小せずそのまま表示）
 
@@ -36,7 +36,7 @@ export class CookingPhase {
     this.judgeShownAt = 0;
     this.finished = false;
     this.awaitingRetry = false;
-    this.bodyBounceAt = null; // バウンド演出の開始時刻（無い間はnull）
+    this.bodyBounce = { scale: 1, offsetY: 0 }; // GSAPで動かす値。render側はこれをそのまま読むだけ
 
     this.steamParticles = [];
     this._lastSteamSpawn = 0;
@@ -65,6 +65,14 @@ export class CookingPhase {
     }
 
     this.gauge.update(deltaSeconds);
+  }
+
+  // 成功のたびに、本体を「ポンと膨らんで少し浮き上がって戻る」バウンドをさせる
+  _bounceBody() {
+    gsap.killTweensOf(this.bodyBounce);
+    gsap.timeline()
+      .to(this.bodyBounce, { scale: 1.4, offsetY: -0.12, duration: 0.15, ease: "back.out(2)" })
+      .to(this.bodyBounce, { scale: 1, offsetY: 0, duration: 0.5, ease: "elastic.out(1, 0.3)" });
   }
 
   _updateSteam(deltaSeconds, elapsedSeconds) {
@@ -107,7 +115,7 @@ export class CookingPhase {
       this.judgeShownAt = elapsedSeconds;
 
       // 1回目の成功から、バウンド演出を入れる
-      this.bodyBounceAt = elapsedSeconds;
+      this._bounceBody();
     } else {
       playSfx(SOUNDS.gameOver);
       this.lastJudgeLabel = "fail";
@@ -154,25 +162,10 @@ export class CookingPhase {
     // ---- 生地本体（トッピングフェーズと同じ位置・サイズになるよう layout.js の値を使用） ----
     const bodyImg = BODY_IMAGES[this.results.length];
 
-    // バウンド演出の計算（対象期間中、大きく膨らみつつ少し浮き上がって戻る）
-    let bounceScale = 1;
-    let bounceOffsetY = 0;
-    if (this.bodyBounceAt !== null) {
-      const t = elapsedSeconds - this.bodyBounceAt;
-      if (t < BODY_BOUNCE_DURATION) {
-        const progress = t / BODY_BOUNCE_DURATION;
-        const wave = Math.sin(progress * Math.PI);
-        bounceScale = 1 + 0.4 * wave; // 膨らみを強め（0.18→0.4）
-        bounceOffsetY = -bodyDrawWidth * 0.12 * wave; // 少し上に跳ねる
-      } else {
-        this.bodyBounceAt = null;
-      }
-    }
-
     let bodyDrawHeight;
     ctx.save();
-    ctx.translate(centerX, centerY + bounceOffsetY);
-    ctx.scale(bounceScale, bounceScale);
+    ctx.translate(centerX, centerY + this.bodyBounce.offsetY * bodyDrawWidth);
+    ctx.scale(this.bodyBounce.scale, this.bodyBounce.scale);
     if (isReady(bodyImg)) {
       bodyDrawHeight = bodyDrawWidth * (bodyImg.naturalHeight / bodyImg.naturalWidth);
       ctx.drawImage(bodyImg, -bodyDrawWidth / 2, -bodyDrawHeight / 2, bodyDrawWidth, bodyDrawHeight);
