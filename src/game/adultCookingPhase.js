@@ -4,23 +4,28 @@ import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
 import gsap from "gsap";
 
-// ---- 調整用の定数（ここを変えるだけでバランス調整できる） ----
-const REPEAT_COUNT = 2; // テコメーター→パワーメーターを繰り返す回数
-const LEVER_SPEED = 0.75; // テコメーターの針の速さ（1セット目）
-const LEVER_SPEED_TURN2_MULTIPLIER = 1.6; // 2セット目の速度倍率（速くなる）
-const LEVER_TIME_LIMIT = 3.0; // 秒。テコメーターの制限時間
-const POWER_TARGET_TAPS = 10; // パワーメーターのノルマ（タップ回数）
-const POWER_TIME_LIMIT = 3.0; // 秒。パワーメーターの制限時間
+// ---- 調整用の定数 ----
+const REPEAT_COUNT = 2;
+const LEVER_SPEED = 0.75;
+const LEVER_SPEED_TURN2_MULTIPLIER = 1.6;
+const LEVER_TIME_LIMIT = 3.0;
+const POWER_TARGET_TAPS = 10;
+const POWER_TIME_LIMIT = 3.0;
+const LEVER_FREEZE_DURATION = 0.8; // 秒。タップ後、メーターが止まった位置を見せておく時間
+const LEVER_TRANSITION_DURATION = 0.6; // 秒。テコ画像（へら）を見せる、ひっくり返す演出
 const RESULT_PAUSE = 0.9; // 秒。各メーターのスコアを表示しておく時間
 
 const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
+const SPATULA_IMG = loadImage("/images/ui/spatula.png"); // シンプルモードと共通のへら画像
 const BODY_RAW_IMG = loadImage("/images/okonomiyaki/body_00_raw.png");
 const BODY_FINAL_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 
 const STAGE = {
   EXPLAIN: "explain",
   LEVER: "lever",
+  LEVER_FREEZE: "lever_freeze",
   LEVER_RESULT: "lever_result",
+  LEVER_TRANSITION: "lever_transition",
   POWER: "power",
   POWER_RESULT: "power_result",
   FINISHED: "finished",
@@ -44,6 +49,7 @@ export class AdultCookingPhase {
     this.bodyBounce = { scale: 1, rotation: 0 };
     this.powerPulse = { scale: 1 };
     this._powerPulseTween = null;
+    this.spatulaSpin = { rotation: 0 };
 
     this.leverPosition = 0;
     this.leverDirection = 1;
@@ -99,6 +105,9 @@ export class AdultCookingPhase {
     if (stage === STAGE.LEVER) {
       this.leverStartedAt = elapsedSeconds;
     }
+    if (stage === STAGE.LEVER_TRANSITION) {
+      gsap.fromTo(this.spatulaSpin, { rotation: 0 }, { rotation: 200, duration: LEVER_TRANSITION_DURATION, ease: "power2.out" });
+    }
     if (stage === STAGE.POWER) {
       this.powerTapCount = 0;
       this.powerStartedAt = elapsedSeconds;
@@ -137,7 +146,8 @@ export class AdultCookingPhase {
     this.totalScore += this.lastLeverScore;
     this._bounceScore();
     playSfx(SOUNDS.flip);
-    this._enterStage(STAGE.LEVER_RESULT, elapsedSeconds);
+    // すぐに結果を出さず、まずメーターが止まった位置を見せる
+    this._enterStage(STAGE.LEVER_FREEZE, elapsedSeconds);
   }
 
   update(deltaSeconds, elapsedSeconds) {
@@ -160,8 +170,20 @@ export class AdultCookingPhase {
       }
     }
 
+    if (this.stage === STAGE.LEVER_FREEZE) {
+      if (elapsedSeconds - this.stageEnteredAt >= LEVER_FREEZE_DURATION) {
+        this._enterStage(STAGE.LEVER_RESULT, elapsedSeconds);
+      }
+    }
+
     if (this.stage === STAGE.LEVER_RESULT) {
       if (elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
+        this._enterStage(STAGE.LEVER_TRANSITION, elapsedSeconds);
+      }
+    }
+
+    if (this.stage === STAGE.LEVER_TRANSITION) {
+      if (elapsedSeconds - this.stageEnteredAt >= LEVER_TRANSITION_DURATION) {
         this._enterStage(STAGE.POWER, elapsedSeconds);
       }
     }
@@ -244,7 +266,7 @@ export class AdultCookingPhase {
       ctx.restore();
     }
 
-    // ---- 湯気（画像があればそちらを、無ければCanvasで柔らかい煙を描く） ----
+    // ---- 湯気 ----
     const bodyRadiusX = bodyW / 2;
     const bodyRadiusY = bodyH / 2;
     for (const p of this.steamParticles) {
@@ -286,10 +308,16 @@ export class AdultCookingPhase {
     ctx.restore();
 
     if (this.stage === STAGE.LEVER) {
-      this._renderLeverMeter(ctx, width, height, elapsedSeconds);
+      this._renderLeverMeter(ctx, width, height, elapsedSeconds, { frozen: false });
+    }
+    if (this.stage === STAGE.LEVER_FREEZE) {
+      this._renderLeverMeter(ctx, width, height, elapsedSeconds, { frozen: true });
     }
     if (this.stage === STAGE.LEVER_RESULT) {
       this._renderScorePopup(ctx, width, height, "テコメーター", this.lastLeverScore);
+    }
+    if (this.stage === STAGE.LEVER_TRANSITION) {
+      this._renderSpatulaTransition(ctx, width, height);
     }
     if (this.stage === STAGE.POWER) {
       this._renderPowerMeter(ctx, width, height, elapsedSeconds);
@@ -365,7 +393,7 @@ export class AdultCookingPhase {
     ctx.restore();
   }
 
-  _renderLeverMeter(ctx, width, height, elapsedSeconds) {
+  _renderLeverMeter(ctx, width, height, elapsedSeconds, { frozen }) {
     // 上部に大きく「真ん中をねらえ！」
     ctx.save();
     ctx.textAlign = "center";
@@ -376,6 +404,20 @@ export class AdultCookingPhase {
     ctx.fillStyle = "#ffcf5c";
     ctx.fillText("真ん中をねらえ！", width / 2, height * 0.2);
     ctx.restore();
+
+    // 残り時間：見出しのすぐ下に大きく表示（フリーズ中は表示しない）
+    if (!frozen) {
+      const remaining = Math.max(LEVER_TIME_LIMIT - (elapsedSeconds - this.leverStartedAt), 0);
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.font = "bold 46px sans-serif";
+      ctx.fillStyle = remaining < 1 ? "#e53935" : "#fff";
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = "#5a2d0c";
+      ctx.strokeText(remaining.toFixed(1), width / 2, height * 0.34);
+      ctx.fillText(remaining.toFixed(1), width / 2, height * 0.34);
+      ctx.restore();
+    }
 
     const gaugeY = height * 0.78;
     const gaugeWidth = width * 0.7;
@@ -389,7 +431,6 @@ export class AdultCookingPhase {
     ctx.fillStyle = gradient;
     ctx.fillRect(gaugeX, gaugeY, gaugeWidth, gaugeHeight);
 
-    // 中央の的マーク
     ctx.save();
     ctx.strokeStyle = "#fff";
     ctx.lineWidth = 3;
@@ -400,8 +441,8 @@ export class AdultCookingPhase {
     ctx.restore();
 
     const needleX = gaugeX + this.leverPosition * gaugeWidth;
-    ctx.fillStyle = "#333";
-    ctx.fillRect(needleX - 3, gaugeY - 6, 6, gaugeHeight + 12);
+    ctx.fillStyle = frozen ? "#4caf50" : "#333";
+    ctx.fillRect(needleX - 4, gaugeY - 8, 8, gaugeHeight + 16);
 
     // 「ここを狙え！」：ゲージの下に配置
     ctx.save();
@@ -422,19 +463,53 @@ export class AdultCookingPhase {
     ctx.fillText("ここを狙え！", gaugeX + gaugeWidth / 2, labelY);
     ctx.restore();
 
-    // 残り時間
-    const remaining = Math.max(LEVER_TIME_LIMIT - (elapsedSeconds - this.leverStartedAt), 0);
+    if (frozen) {
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.font = "bold 16px sans-serif";
+      ctx.fillStyle = "#fff";
+      ctx.fillText("ここで止まった！", width / 2, gaugeY - 16);
+      ctx.restore();
+    }
+  }
+
+  _renderSpatulaTransition(ctx, width, height) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+
+    if (isReady(SPATULA_IMG)) {
+      const w = width * 0.6;
+      const h = w * (SPATULA_IMG.naturalHeight / SPATULA_IMG.naturalWidth);
+      ctx.save();
+      ctx.translate(width / 2, height * 0.45);
+      ctx.rotate((this.spatulaSpin.rotation * Math.PI) / 180);
+      ctx.drawImage(SPATULA_IMG, -w / 2, -h / 2, w, h);
+      ctx.restore();
+    }
+
     ctx.save();
     ctx.textAlign = "center";
-    ctx.font = "bold 22px sans-serif";
-    ctx.fillStyle = remaining < 1 ? "#e53935" : "#5a2d0c";
-    ctx.fillText(remaining.toFixed(1), width / 2, gaugeY - 20);
+    ctx.font = "bold 26px sans-serif";
+    ctx.fillStyle = "#ffcf5c";
+    ctx.fillText("ひっくり返す！", width / 2, height * 0.7);
     ctx.restore();
   }
 
   _renderPowerMeter(ctx, width, height, elapsedSeconds) {
     ctx.save();
-    ctx.translate(width / 2, height * 0.6);
+    ctx.textAlign = "center";
+    ctx.font = "bold 22px sans-serif";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "#5a2d0c";
+    ctx.strokeText("パワーをためてひっくり返せ！", width / 2, height * 0.5);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("パワーをためてひっくり返せ！", width / 2, height * 0.5);
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(width / 2, height * 0.62);
     ctx.scale(this.powerPulse.scale, this.powerPulse.scale);
     ctx.textAlign = "center";
     ctx.font = "bold 44px sans-serif";
@@ -449,7 +524,7 @@ export class AdultCookingPhase {
 
     ctx.save();
     ctx.textAlign = "center";
-    ctx.font = "bold 40px sans-serif";
+    ctx.font = "bold 36px sans-serif";
     ctx.fillStyle = remaining < 1 ? "#e53935" : "#5a2d0c";
     ctx.fillText(remaining.toFixed(2), width / 2, height * 0.72);
     ctx.restore();

@@ -9,6 +9,20 @@ const TOTAL_FLIPS = 4;
 const SUCCESS_DISPLAY_DURATION = 0.9; // 秒。成功演出（文字・星・キャラ）を表示しておく時間
 const CHARACTER_POP_GROW_DURATION = 0.2; // 秒。キャラがポンと出てくるまでの時間（この後は縮小せずそのまま表示）
 
+// ---- 難易度カーブ（回数が進むごとに速く・成功ゾーンが狭くなる） ----
+const BASE_SPEED = 0.4;
+const SPEED_STEP = 0.06; // 1回ごとに速度がこれだけ上がる
+const BASE_ZONE_WIDTH = 0.35;
+const ZONE_WIDTH_STEP = 0.05; // 1回ごとに成功ゾーンがこれだけ狭くなる
+const MIN_ZONE_WIDTH = 0.16; // これ以上は狭くしない（さすがに不可能にならないように）
+
+function gaugeSettingsForFlip(flipIndex) {
+  return {
+    speed: BASE_SPEED + flipIndex * SPEED_STEP,
+    zoneWidth: Math.max(BASE_ZONE_WIDTH - flipIndex * ZONE_WIDTH_STEP, MIN_ZONE_WIDTH),
+  };
+}
+
 // ---- 画像パス設定 ----
 const SPATULA_IMG = loadImage("/images/ui/spatula.png");
 const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
@@ -29,20 +43,22 @@ export class CookingPhase {
   constructor({ onComplete, onFail }) {
     this.onComplete = onComplete;
     this.onFail = onFail;
+    this.showingExplain = true; // 開始時の解説画面
     this.flipIndex = 0;
     this.results = [];
-    this.gauge = new TimingGauge({ speed: 0.4, zoneWidth: 0.35 });
+    this.gauge = new TimingGauge(gaugeSettingsForFlip(0));
     this.lastJudgeLabel = null;
     this.judgeShownAt = 0;
     this.finished = false;
     this.awaitingRetry = false;
-    this.bodyBounce = { scale: 1, offsetY: 0 }; // GSAPで動かす値。render側はこれをそのまま読むだけ
+    this.bodyBounce = { scale: 1, offsetY: 0 };
 
     this.steamParticles = [];
     this._lastSteamSpawn = 0;
   }
 
   update(deltaSeconds, elapsedSeconds) {
+    if (this.showingExplain) return;
     if (this.awaitingRetry) return;
 
     this._updateSteam(deltaSeconds, elapsedSeconds);
@@ -61,7 +77,7 @@ export class CookingPhase {
         this.onComplete(this.results);
         return;
       }
-      this.gauge = new TimingGauge({ speed: 0.4 + this.flipIndex * 0.03, zoneWidth: 0.35 });
+      this.gauge = new TimingGauge(gaugeSettingsForFlip(this.flipIndex));
     }
 
     this.gauge.update(deltaSeconds);
@@ -78,7 +94,6 @@ export class CookingPhase {
   _updateSteam(deltaSeconds, elapsedSeconds) {
     if (elapsedSeconds - this._lastSteamSpawn > 0.25) {
       this._lastSteamSpawn = elapsedSeconds;
-      // 1回の発生で複数個まとめて出す（量を増やして派手にする）
       const spawnCount = 2 + Math.floor(Math.random() * 2);
       for (let i = 0; i < spawnCount; i++) {
         this.steamParticles.push({
@@ -97,6 +112,12 @@ export class CookingPhase {
   }
 
   handleTap(elapsedSeconds) {
+    if (this.showingExplain) {
+      playSfx(SOUNDS.start);
+      this.showingExplain = false;
+      return;
+    }
+
     if (this.awaitingRetry) {
       playSfx(SOUNDS.retryTap);
       this.onFail();
@@ -107,14 +128,12 @@ export class CookingPhase {
     const result = this.gauge.judge();
 
     if (result === "success") {
-      // 1回目だけ専用の音、2回目以降は共通の音
       playSfx(this.results.length === 0 ? SOUNDS.flipFirst : SOUNDS.flip);
 
       this.results.push(result);
       this.lastJudgeLabel = "success";
       this.judgeShownAt = elapsedSeconds;
 
-      // 1回目の成功から、バウンド演出を入れる
       this._bounceBody();
     } else {
       playSfx(SOUNDS.gameOver);
@@ -127,6 +146,11 @@ export class CookingPhase {
     const centerX = width / 2;
     const centerY = height * BODY_CENTER_Y_RATIO;
     const bodyDrawWidth = width * BODY_WIDTH_RATIO;
+
+    if (this.showingExplain) {
+      this._renderExplain(ctx, width, height, elapsedSeconds);
+      return;
+    }
 
     // ---- 失敗後：失敗画像＋点滅するリトライ案内のみ表示 ----
     if (this.awaitingRetry) {
@@ -194,7 +218,6 @@ export class CookingPhase {
         ctx.drawImage(STEAM_IMG, sx - size / 2, sy - size / 2, size, size);
         ctx.restore();
       } else {
-        // 画像が無くても、白いグラデーションの丸を重ねてふわっとした湯気に見せる
         const radius = 24 * p.scale;
         const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
         gradient.addColorStop(0, `rgba(255,255,255,${0.55 * alpha})`);
@@ -229,14 +252,14 @@ export class CookingPhase {
 
     // ---- 見出し ----
     ctx.save();
-    ctx.font = "bold 21px sans-serif"; // 元の26pxから20%縮小
+    ctx.font = "bold 21px sans-serif";
     ctx.textAlign = "center";
     const headingText = "タイミングよくひっくり返そう！";
     const headingMetrics = ctx.measureText(headingText);
     const headingPadX = 16;
     const headingBarW = headingMetrics.width + headingPadX * 2;
     const headingBarH = 36;
-    const headingY = height * 0.13; // 少し下に移動
+    const headingY = height * 0.13;
     ctx.fillStyle = "rgba(90,45,12,0.75)";
     ctx.beginPath();
     ctx.roundRect(width / 2 - headingBarW / 2, headingY - headingBarH * 0.72, headingBarW, headingBarH, 20);
@@ -257,10 +280,9 @@ export class CookingPhase {
         ctx.restore();
       }
 
-      // 応援キャラ：中央上あたりにポンと出てきて、そのままキープ（フェードや縮小はしない）
       if (isReady(CHARACTER_IMG)) {
         const growProgress = Math.min((elapsedSeconds - this.judgeShownAt) / CHARACTER_POP_GROW_DURATION, 1);
-        const growScale = Math.sin(growProgress * (Math.PI / 2)); // 0→1（出てきたら止まる、消えない）
+        const growScale = Math.sin(growProgress * (Math.PI / 2));
         const charCenterX = width * 0.5;
         const charCenterY = height * 0.28;
         const charH = width * 0.4 * growScale;
@@ -325,6 +347,31 @@ export class CookingPhase {
     ctx.strokeText("画面をタップ！", width / 2, gaugeY + gaugeHeight + 30);
     ctx.fillStyle = "#e0552b";
     ctx.fillText("画面をタップ！", width / 2, gaugeY + gaugeHeight + 30);
+    ctx.restore();
+  }
+
+  _renderExplain(ctx, width, height, elapsedSeconds) {
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffcf5c";
+    ctx.font = "bold 26px sans-serif";
+    ctx.fillText("ひっくり返すフェーズ", width / 2, height * 0.32);
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 17px sans-serif";
+    const lines = ["ゲージがまんなかにきたら", "画面をタップしよう！", `ぜんぶで${TOTAL_FLIPS}回、だんだん速くなるよ`];
+    lines.forEach((line, i) => {
+      ctx.fillText(line, width / 2, height * 0.44 + i * 30);
+    });
+
+    const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin((elapsedSeconds * Math.PI * 2) / 1.4));
+    ctx.globalAlpha = blinkAlpha;
+    ctx.fillStyle = "#e0552b";
+    ctx.font = "bold 18px sans-serif";
+    ctx.fillText("タップしてはじめる", width / 2, height * 0.44 + lines.length * 30 + 30);
     ctx.restore();
   }
 }

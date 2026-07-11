@@ -143,6 +143,7 @@ export class AdultToppingPhase {
     }
 
     if (this.stage === STAGE.SAUCE_RESULT && elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
+      this.tracePathHistory = []; // ソースの軌跡が残らないようクリア
       this._enterStage(STAGE.EXPLAIN_MAYO, elapsedSeconds);
     }
 
