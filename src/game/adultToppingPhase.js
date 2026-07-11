@@ -79,19 +79,19 @@ export class AdultToppingPhase {
     return points;
   }
 
-  // マヨネーズ：急カーブが連続する曲線。画面いっぱいを使い、振幅・頻度をさらに上げて高難易度に
+  // マヨネーズ：急カーブが連続する曲線。上から下方向へ、カーブ数8でさらに高難易度に
   _getMayoPathPoints(width, height) {
-    const cy = height * BODY_CENTER_Y_RATIO;
-    const amp = height * 0.13; // ソースより振れ幅を大きく
-    const frequency = 4.5; // カーブの数をさらに増やす（2.5→4.5）
-    const xStart = width * 0.06;
-    const xEnd = width * 0.94;
+    const cx = width / 2;
+    const ampX = width * 0.28; // 横方向の振れ幅
+    const frequency = 8; // カーブの数（4.5→8にさらに増加）
+    const yStart = height * 0.1;
+    const yEnd = height * 0.82;
     const points = [];
-    const SAMPLE_COUNT = 70; // サンプル数を増やして曲線をより滑らか＆精密に
+    const SAMPLE_COUNT = 90; // 縦に長くなった分、サンプル数を増やして滑らかに
     for (let i = 0; i <= SAMPLE_COUNT; i++) {
       const t = i / SAMPLE_COUNT;
-      const x = xStart + (xEnd - xStart) * t;
-      const y = cy + amp * Math.sin(t * frequency * Math.PI * 2);
+      const y = yStart + (yEnd - yStart) * t;
+      const x = cx + ampX * Math.sin(t * frequency * Math.PI * 2);
       points.push({ x, y });
     }
     return points;

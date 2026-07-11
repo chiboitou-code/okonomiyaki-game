@@ -5,13 +5,15 @@ import { SOUNDS } from "./sounds.js";
 import gsap from "gsap";
 
 // ---- 調整用の定数（ここを変えるだけでバランス調整できる） ----
-const REPEAT_COUNT = 2; // テコメーター→パワーメーターを繰り返す回数（後で4に増やす想定）
-const LEVER_SPEED = 0.75; // テコメーターの針の速さ（大きいほど速い＝難しい）
+const REPEAT_COUNT = 2; // テコメーター→パワーメーターを繰り返す回数
+const LEVER_SPEED = 0.75; // テコメーターの針の速さ（1セット目）
+const LEVER_SPEED_TURN2_MULTIPLIER = 1.6; // 2セット目の速度倍率（速くなる）
+const LEVER_TIME_LIMIT = 3.0; // 秒。テコメーターの制限時間
 const POWER_TARGET_TAPS = 10; // パワーメーターのノルマ（タップ回数）
 const POWER_TIME_LIMIT = 3.0; // 秒。パワーメーターの制限時間
 const RESULT_PAUSE = 0.9; // 秒。各メーターのスコアを表示しておく時間
 
-// 本体画像：開始前は1枚目(生)。1セット終わるたびに、ひっくり返って4枚目(完成)に変わる
+const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
 const BODY_RAW_IMG = loadImage("/images/okonomiyaki/body_00_raw.png");
 const BODY_FINAL_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 
@@ -31,7 +33,7 @@ export class AdultCookingPhase {
    */
   constructor({ onComplete }) {
     this.onComplete = onComplete;
-    this.cycleIndex = 0; // 何セット目か（0〜REPEAT_COUNT-1）
+    this.cycleIndex = 0;
     this.stage = STAGE.EXPLAIN;
     this.stageEnteredAt = performance.now() / 1000;
 
@@ -40,19 +42,20 @@ export class AdultCookingPhase {
     this.lastPowerScore = 0;
     this.scoreBounce = { scale: 1, flash: 0 };
     this.bodyBounce = { scale: 1, rotation: 0 };
-    this.powerPulse = { scale: 1 }; // パワーメーター中の連打演出（ズームイン/アウト）を継続させる用
+    this.powerPulse = { scale: 1 };
     this._powerPulseTween = null;
 
-    // テコメーター用
     this.leverPosition = 0;
     this.leverDirection = 1;
+    this.leverStartedAt = null;
 
-    // パワーメーター用
     this.powerTapCount = 0;
     this.powerStartedAt = null;
+
+    this.steamParticles = [];
+    this._lastSteamSpawn = 0;
   }
 
-  // 点数が入った時に、GSAPで弾力のあるバウンド＋色フラッシュをさせる
   _bounceScore() {
     gsap.killTweensOf(this.scoreBounce);
     gsap.timeline()
@@ -61,7 +64,6 @@ export class AdultCookingPhase {
       .to(this.scoreBounce, { flash: 0, duration: 0.4, ease: "power1.out" }, "<0.1");
   }
 
-  // 1セット（テコ＋パワー）終わるたびに、本体がひっくり返ったようにバウンド＋少し回転させる
   _bounceBody() {
     gsap.killTweensOf(this.bodyBounce);
     gsap.timeline()
@@ -69,7 +71,6 @@ export class AdultCookingPhase {
       .to(this.bodyBounce, { scale: 1, rotation: 0, duration: 0.5, ease: "elastic.out(1, 0.3)" });
   }
 
-  // パワーメーター中、連打を直感的に誘うズームイン/アウトを繰り返す
   _startPowerPulse() {
     this._powerPulseTween = gsap.to(this.powerPulse, {
       scale: 1.15,
@@ -88,9 +89,16 @@ export class AdultCookingPhase {
     this.powerPulse.scale = 1;
   }
 
+  _currentLeverSpeed() {
+    return this.cycleIndex >= 1 ? LEVER_SPEED * LEVER_SPEED_TURN2_MULTIPLIER : LEVER_SPEED;
+  }
+
   _enterStage(stage, elapsedSeconds) {
     this.stage = stage;
     this.stageEnteredAt = elapsedSeconds;
+    if (stage === STAGE.LEVER) {
+      this.leverStartedAt = elapsedSeconds;
+    }
     if (stage === STAGE.POWER) {
       this.powerTapCount = 0;
       this.powerStartedAt = elapsedSeconds;
@@ -100,15 +108,55 @@ export class AdultCookingPhase {
     }
   }
 
+  _updateSteam(deltaSeconds, elapsedSeconds) {
+    if (elapsedSeconds - this._lastSteamSpawn > 0.25) {
+      this._lastSteamSpawn = elapsedSeconds;
+      const spawnCount = 2 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < spawnCount; i++) {
+        this.steamParticles.push({
+          offsetX: (Math.random() - 0.5) * 0.7,
+          y: 0,
+          alpha: 0.9,
+          scale: 0.8 + Math.random() * 0.6,
+        });
+      }
+    }
+    for (const p of this.steamParticles) {
+      p.y += deltaSeconds * 55;
+      p.alpha -= deltaSeconds * 0.4;
+    }
+    this.steamParticles = this.steamParticles.filter((p) => p.alpha > 0);
+  }
+
+  _finalizeLever(elapsedSeconds, remaining) {
+    const distance = Math.abs(this.leverPosition - 0.5) * 2;
+    const accuracyFactor = 1 - distance;
+    const precisionScore = Math.round(70 * accuracyFactor);
+    const timeBonus = Math.round(30 * (remaining / LEVER_TIME_LIMIT));
+    this.lastLeverScore = Math.min(precisionScore + timeBonus, 100);
+    this.totalScore += this.lastLeverScore;
+    this._bounceScore();
+    playSfx(SOUNDS.flip);
+    this._enterStage(STAGE.LEVER_RESULT, elapsedSeconds);
+  }
+
   update(deltaSeconds, elapsedSeconds) {
+    this._updateSteam(deltaSeconds, elapsedSeconds);
+
     if (this.stage === STAGE.LEVER) {
-      this.leverPosition += this.leverDirection * LEVER_SPEED * deltaSeconds;
+      const speed = this._currentLeverSpeed();
+      this.leverPosition += this.leverDirection * speed * deltaSeconds;
       if (this.leverPosition >= 1) {
         this.leverPosition = 1;
         this.leverDirection = -1;
       } else if (this.leverPosition <= 0) {
         this.leverPosition = 0;
         this.leverDirection = 1;
+      }
+
+      const remaining = LEVER_TIME_LIMIT - (elapsedSeconds - this.leverStartedAt);
+      if (remaining <= 0) {
+        this._finalizeLever(elapsedSeconds, 0);
       }
     }
 
@@ -152,12 +200,8 @@ export class AdultCookingPhase {
     }
 
     if (this.stage === STAGE.LEVER) {
-      const distance = Math.abs(this.leverPosition - 0.5) * 2;
-      this.lastLeverScore = Math.round(100 * (1 - distance));
-      this.totalScore += this.lastLeverScore;
-      this._bounceScore();
-      playSfx(SOUNDS.flip);
-      this._enterStage(STAGE.LEVER_RESULT, elapsedSeconds);
+      const remaining = Math.max(LEVER_TIME_LIMIT - (elapsedSeconds - this.leverStartedAt), 0);
+      this._finalizeLever(elapsedSeconds, remaining);
       return;
     }
 
@@ -183,20 +227,47 @@ export class AdultCookingPhase {
     const bodyW = width * BODY_WIDTH_RATIO;
 
     if (this.stage === STAGE.EXPLAIN) {
-      this._renderExplain(ctx, width, height);
+      this._renderExplain(ctx, width, height, elapsedSeconds);
       return;
     }
 
-    // ---- 本体（1セット終わるたびにひっくり返って完成画像に変わる） ----
+    // ---- 本体 ----
     const bodyImg = this.cycleIndex >= 1 ? BODY_FINAL_IMG : BODY_RAW_IMG;
+    let bodyH = bodyW;
     if (isReady(bodyImg)) {
-      const bodyH = bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth);
+      bodyH = bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth);
       ctx.save();
       ctx.translate(centerX, centerY);
       ctx.rotate((this.bodyBounce.rotation * Math.PI) / 180);
       ctx.scale(this.bodyBounce.scale, this.bodyBounce.scale);
       ctx.drawImage(bodyImg, -bodyW / 2, -bodyH / 2, bodyW, bodyH);
       ctx.restore();
+    }
+
+    // ---- 湯気（画像があればそちらを、無ければCanvasで柔らかい煙を描く） ----
+    const bodyRadiusX = bodyW / 2;
+    const bodyRadiusY = bodyH / 2;
+    for (const p of this.steamParticles) {
+      const sx = centerX + p.offsetX * bodyRadiusX * 2;
+      const sy = centerY - bodyRadiusY * 0.6 - p.y;
+      const alpha = Math.max(p.alpha, 0);
+      if (isReady(STEAM_IMG)) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const size = 40 * p.scale;
+        ctx.drawImage(STEAM_IMG, sx - size / 2, sy - size / 2, size, size);
+        ctx.restore();
+      } else {
+        const radius = 24 * p.scale;
+        const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
+        gradient.addColorStop(0, `rgba(255,255,255,${0.55 * alpha})`);
+        gradient.addColorStop(0.6, `rgba(255,255,255,${0.25 * alpha})`);
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
     }
 
     // ---- 見出し（何セット目か） ----
@@ -215,7 +286,7 @@ export class AdultCookingPhase {
     ctx.restore();
 
     if (this.stage === STAGE.LEVER) {
-      this._renderLeverMeter(ctx, width, height);
+      this._renderLeverMeter(ctx, width, height, elapsedSeconds);
     }
     if (this.stage === STAGE.LEVER_RESULT) {
       this._renderScorePopup(ctx, width, height, "テコメーター", this.lastLeverScore);
@@ -263,7 +334,7 @@ export class AdultCookingPhase {
     }
   }
 
-  _renderExplain(ctx, width, height) {
+  _renderExplain(ctx, width, height, elapsedSeconds) {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.6)";
     ctx.fillRect(0, 0, width, height);
@@ -277,37 +348,33 @@ export class AdultCookingPhase {
     ctx.font = "bold 17px sans-serif";
     const lines = [
       "テコメーター：ジャストのタイミングでタップ！",
-      "中央に近いほど高得点",
+      `制限時間${LEVER_TIME_LIMIT}秒、中央に近く・早いほど高得点`,
       "そのあとパワーメーター：",
       `制限時間内に${POWER_TARGET_TAPS}回連打しよう！`,
-      `これを${REPEAT_COUNT}セットくり返します`,
+      `これを${REPEAT_COUNT}セットくり返します（2セット目は速くなる）`,
     ];
     lines.forEach((line, i) => {
-      ctx.fillText(line, width / 2, height * 0.44 + i * 30);
+      ctx.fillText(line, width / 2, height * 0.42 + i * 28);
     });
 
-    const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(elapsedSecondsNow() * Math.PI * 2 / 1.4));
+    const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin((elapsedSeconds * Math.PI * 2) / 1.4));
     ctx.globalAlpha = blinkAlpha;
     ctx.fillStyle = "#e0552b";
     ctx.font = "bold 18px sans-serif";
-    ctx.fillText("タップしてはじめる", width / 2, height * 0.44 + lines.length * 30 + 30);
+    ctx.fillText("タップしてはじめる", width / 2, height * 0.42 + lines.length * 28 + 30);
     ctx.restore();
   }
 
-  _renderLeverMeter(ctx, width, height) {
-    // 見出し：背景に帯を敷いて見やすく
+  _renderLeverMeter(ctx, width, height, elapsedSeconds) {
+    // 上部に大きく「真ん中をねらえ！」
     ctx.save();
-    ctx.font = "bold 20px sans-serif";
     ctx.textAlign = "center";
-    const headingText = "テコメーター：ジャストでタップ！";
-    const metrics = ctx.measureText(headingText);
-    const barW = metrics.width + 28;
-    ctx.fillStyle = "rgba(90,45,12,0.75)";
-    ctx.beginPath();
-    ctx.roundRect(width / 2 - barW / 2, height * 0.68, barW, 38, 18);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText(headingText, width / 2, height * 0.68 + 26);
+    ctx.font = "bold 30px sans-serif";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#5a2d0c";
+    ctx.strokeText("真ん中をねらえ！", width / 2, height * 0.2);
+    ctx.fillStyle = "#ffcf5c";
+    ctx.fillText("真ん中をねらえ！", width / 2, height * 0.2);
     ctx.restore();
 
     const gaugeY = height * 0.78;
@@ -332,31 +399,40 @@ export class AdultCookingPhase {
     ctx.stroke();
     ctx.restore();
 
-    // 「ここを狙え！」の案内（中央マークの上に矢印付きで表示）
+    const needleX = gaugeX + this.leverPosition * gaugeWidth;
+    ctx.fillStyle = "#333";
+    ctx.fillRect(needleX - 3, gaugeY - 6, 6, gaugeHeight + 12);
+
+    // 「ここを狙え！」：ゲージの下に配置
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 16px sans-serif";
     ctx.fillStyle = "#ffcf5c";
     ctx.lineWidth = 3;
     ctx.strokeStyle = "#5a2d0c";
-    ctx.strokeText("ここを狙え！", gaugeX + gaugeWidth / 2, gaugeY - 14);
-    ctx.fillText("ここを狙え！", gaugeX + gaugeWidth / 2, gaugeY - 14);
+    const labelY = gaugeY + gaugeHeight + 34;
     ctx.beginPath();
-    ctx.moveTo(gaugeX + gaugeWidth / 2, gaugeY - 10);
-    ctx.lineTo(gaugeX + gaugeWidth / 2 - 6, gaugeY - 18);
-    ctx.lineTo(gaugeX + gaugeWidth / 2 + 6, gaugeY - 18);
+    ctx.moveTo(gaugeX + gaugeWidth / 2, gaugeY + gaugeHeight + 8);
+    ctx.lineTo(gaugeX + gaugeWidth / 2 - 6, gaugeY + gaugeHeight + 16);
+    ctx.lineTo(gaugeX + gaugeWidth / 2 + 6, gaugeY + gaugeHeight + 16);
     ctx.closePath();
     ctx.fillStyle = "#ffcf5c";
     ctx.fill();
+    ctx.strokeText("ここを狙え！", gaugeX + gaugeWidth / 2, labelY);
+    ctx.fillText("ここを狙え！", gaugeX + gaugeWidth / 2, labelY);
     ctx.restore();
 
-    const needleX = gaugeX + this.leverPosition * gaugeWidth;
-    ctx.fillStyle = "#333";
-    ctx.fillRect(needleX - 3, gaugeY - 6, 6, gaugeHeight + 12);
+    // 残り時間
+    const remaining = Math.max(LEVER_TIME_LIMIT - (elapsedSeconds - this.leverStartedAt), 0);
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillStyle = remaining < 1 ? "#e53935" : "#5a2d0c";
+    ctx.fillText(remaining.toFixed(1), width / 2, gaugeY - 20);
+    ctx.restore();
   }
 
   _renderPowerMeter(ctx, width, height, elapsedSeconds) {
-    // 「連打して！！」：大きく、ズームイン/アウトを繰り返して直感的に誘う
     ctx.save();
     ctx.translate(width / 2, height * 0.6);
     ctx.scale(this.powerPulse.scale, this.powerPulse.scale);
@@ -407,8 +483,4 @@ export class AdultCookingPhase {
     ctx.fillText(`${score} 点`, width / 2, height * 0.74);
     ctx.restore();
   }
-}
-
-function elapsedSecondsNow() {
-  return performance.now() / 1000;
 }

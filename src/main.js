@@ -114,6 +114,12 @@ function renderUI() {
       }
       startCooking();
     };
+    const simpleRow = document.createElement("div");
+    simpleRow.style.cssText = "display:flex;align-items:center;gap:10px;";
+    const simpleAgeLabel = document.createElement("span");
+    simpleAgeLabel.textContent = "3〜5才用";
+    simpleAgeLabel.style.cssText = "font-size:13px;font-weight:bold;color:#5a2d0c;background:#fff;padding:4px 10px;border-radius:999px;";
+    simpleRow.append(simpleBtn, simpleAgeLabel);
 
     const scoreBtn = document.createElement("button");
     scoreBtn.className = "btn";
@@ -127,8 +133,14 @@ function renderUI() {
       }
       startAdultCooking();
     };
+    const scoreRow = document.createElement("div");
+    scoreRow.style.cssText = "display:flex;align-items:center;gap:10px;";
+    const scoreAgeLabel = document.createElement("span");
+    scoreAgeLabel.textContent = "6〜8才用";
+    scoreAgeLabel.style.cssText = "font-size:13px;font-weight:bold;color:#fff;background:#5a2d0c;padding:4px 10px;border-radius:999px;";
+    scoreRow.append(scoreBtn, scoreAgeLabel);
 
-    wrap.append(logoImg, title, simpleBtn, scoreBtn);
+    wrap.append(logoImg, title, simpleRow, scoreRow);
     uiLayer.appendChild(wrap);
   }
 }
