@@ -253,7 +253,7 @@ function loop(now) {
     adultCookingPhase.update(deltaSeconds, elapsedSeconds);
     adultCookingPhase.render(ctx, width, height, elapsedSeconds);
   } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
-    adultToppingPhase.update(deltaSeconds, elapsedSeconds);
+    adultToppingPhase.update(deltaSeconds, elapsedSeconds, width, height);
     adultToppingPhase.render(ctx, width, height, elapsedSeconds);
   } else if (state.scene === SCENES.TOPPING && toppingPhase) {
     toppingPhase.update(deltaSeconds, elapsedSeconds);
