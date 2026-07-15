@@ -12,13 +12,20 @@ const MAYO_MAX_DEVIATION_RATIO = 0.1; // マヨネーズはより厳しめ
 const RESULT_PAUSE = 1.2; // 秒。結果表示の時間
 
 // あおのり（モグラたたき風リズムゲーム）用の調整値
-const AONORI_NOTE_COUNT = 9; // 1プレイで降らせるノーツの数
-const AONORI_FALL_SPEED_RATIO = 0.32; // 画面縦幅に対する、1秒あたりの落下距離の割合
-const AONORI_JUDGMENT_Y_RATIO = 0.72; // 判定ラインのY位置（画面縦幅に対する割合）
-const AONORI_ZONE_TOLERANCE_RATIO = 0.045; // 判定ラインからの許容ズレ（この範囲内なら高得点）
+const AONORI_SESSION_DURATION = 12; // 秒。この時間の間、ノーツが降り続ける（個数の縛りは無し）
+const AONORI_SPAWN_INTERVAL = 0.6; // 秒。ノーツとノーツの発生間隔（落下時間より短いので、複数個が同時に画面上に存在する）
+const AONORI_FALL_SPEED_RATIO = 0.55; // 画面縦幅に対する、1秒あたりの落下距離の割合（速め）
+const AONORI_JUDGMENT_Y_RATIO = 0.5; // 判定ラインのY位置（画面中央）
+const AONORI_GREAT_TOLERANCE_RATIO = 0.035; // 「グレイト」判定の許容ズレ（狭い＝高得点ゾーン）
+const AONORI_GOOD_TOLERANCE_RATIO = 0.1; // 「グッド」判定の許容ズレ（広い＝中得点ゾーン）
 const AONORI_HIT_RADIUS_RATIO = 0.14; // ノーツをタップしたと判定する、ノーツ中心からの距離（画面横幅基準）
 const AONORI_MISS_MARGIN_RATIO = 0.16; // 判定ラインをこれだけ通り過ぎたら自動的にミス扱い
-const AONORI_SPAWN_GAP = 0.35; // 秒。ノーツとノーツの間の間隔
+const AONORI_GREAT_SCORE = 100;
+const AONORI_GOOD_SCORE = 60;
+
+// 青のりの質感（多色ブレンド・フレーク形状）
+const AONORI_COLORS = ["#2e7d32", "#1b5e20", "#43a047", "#558b2f", "#33691e"];
+const AONORI_SPRAY_COUNT = 6; // 1回のタップで散らす粒の数
 
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
@@ -47,9 +54,22 @@ export class AdultToppingPhase {
    * @param {() => void} opts.onFinish - 一連の流れが終わった時（呼び出し側でタイトル等に戻す）
    * @param {number} [opts.initialScore] - それ以前のフェーズ（ひっくり返すフェーズ等）からの持ち越しスコア
    */
-  constructor({ onFinish, initialScore = 0 }) {
+  /**
+   * @param {object} opts
+   * @param {() => void} opts.onFinish - 一連の流れが終わった時（呼び出し側でタイトル等に戻す）
+   * @param {number} [opts.initialScore] - それ以前のフェーズ（ひっくり返すフェーズ等）からの持ち越しスコア
+   * @param {"sauce"|"mayo"|"aonori"} [opts.startAt] - デバッグ用：指定したゲームの説明画面から開始する
+   * @param {boolean} [opts.debugSingleGame] - デバッグ用：1つのゲームが終わったら、そのままonFinishを呼ぶ
+   */
+  constructor({ onFinish, initialScore = 0, startAt = null, debugSingleGame = false }) {
     this.onFinish = onFinish;
-    this.stage = STAGE.EXPLAIN_SAUCE;
+    this.debugSingleGame = debugSingleGame;
+    const startStageMap = {
+      sauce: STAGE.EXPLAIN_SAUCE,
+      mayo: STAGE.EXPLAIN_MAYO,
+      aonori: STAGE.EXPLAIN_AONORI,
+    };
+    this.stage = startStageMap[startAt] || STAGE.EXPLAIN_SAUCE;
     this.stageEnteredAt = performance.now() / 1000;
 
     this.totalScore = initialScore;
@@ -67,11 +87,13 @@ export class AdultToppingPhase {
     this.tracePathHistory = []; // なぞった軌跡（光る帯の描画用）
 
     // あおのり用の状態
-    this.aonoriNotesSpawned = 0;
     this.aonoriScore = 0;
-    this.currentAonoriNote = null; // { x, y }
-    this.aonoriPlaced = []; // 着地済みの粒 { x, y, size, rotation }
-    this._nextAonoriSpawnAt = null;
+    this.fallingNotes = []; // 同時に複数存在する落下中のノーツ { x, y }
+    this.aonoriPlaced = []; // 着地済みの粒（青のりの質感で描画） { x, y, sizeX, sizeY, rotation, color }
+    this.aonoriFeedback = []; // 「グレイト！」「グッド！」の一瞬のテキスト表示 { x, y, text, color, age }
+    this.aonoriSessionStartedAt = null;
+    this.aonoriLastSpawnAt = null;
+    this.aonoriSpawningDone = false;
   }
 
   _enterStage(stage, elapsedSeconds) {
@@ -165,11 +187,19 @@ export class AdultToppingPhase {
 
     if (this.stage === STAGE.SAUCE_RESULT && elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
       this.tracePathHistory = []; // ソースの軌跡が残らないようクリア
-      this._enterStage(STAGE.EXPLAIN_MAYO, elapsedSeconds);
+      if (this.debugSingleGame) {
+        this.onFinish();
+      } else {
+        this._enterStage(STAGE.EXPLAIN_MAYO, elapsedSeconds);
+      }
     }
 
     if (this.stage === STAGE.MAYO_RESULT && elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
-      this._enterStage(STAGE.EXPLAIN_AONORI, elapsedSeconds);
+      if (this.debugSingleGame) {
+        this.onFinish();
+      } else {
+        this._enterStage(STAGE.EXPLAIN_AONORI, elapsedSeconds);
+      }
     }
 
     if (this.stage === STAGE.AONORI_PLAY) {
@@ -177,44 +207,60 @@ export class AdultToppingPhase {
     }
 
     if (this.stage === STAGE.AONORI_RESULT && elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
-      // 現時点ではかつおぶしが未実装のため、いったんここで終了させる
-      this._enterStage(STAGE.STUB_END, elapsedSeconds);
+      if (this.debugSingleGame) {
+        this.onFinish();
+      } else {
+        // 現時点ではかつおぶしが未実装のため、いったんここで終了させる
+        this._enterStage(STAGE.STUB_END, elapsedSeconds);
+      }
     }
   }
 
   _spawnAonoriNote(width, height) {
-    this.aonoriNotesSpawned += 1;
-    this.currentAonoriNote = {
+    this.fallingNotes.push({
       x: width * (0.18 + Math.random() * 0.64),
       y: -height * 0.08,
-    };
+    });
   }
 
   _updateAonori(deltaSeconds, elapsedSeconds) {
-    if (!this.currentAonoriNote) {
-      // 最初のノーツ、または直前のノーツ処理後の間隔待ち
-      if (this._nextAonoriSpawnAt === null || elapsedSeconds >= this._nextAonoriSpawnAt) {
-        if (this.aonoriNotesSpawned >= AONORI_NOTE_COUNT) {
-          this.lastScore = this.aonoriScore;
-          this.totalScore += this.aonoriScore;
-          this._bounceScore();
-          this._enterStage(STAGE.AONORI_RESULT, elapsedSeconds);
-          return;
-        }
-        this._spawnAonoriNote(this._lastWidth, this._lastHeight || this._lastWidth * 1.6);
-      }
-      return;
+    const width = this._lastWidth;
+    const height = this._lastHeight || this._lastWidth * 1.6;
+
+    if (this.aonoriSessionStartedAt === null) {
+      this.aonoriSessionStartedAt = elapsedSeconds;
+      this.aonoriLastSpawnAt = elapsedSeconds - AONORI_SPAWN_INTERVAL; // 開始直後にすぐ1個目が出るように
     }
 
-    const height = this._lastHeight || this._lastWidth * 1.6;
-    this.currentAonoriNote.y += height * AONORI_FALL_SPEED_RATIO * deltaSeconds;
+    // 制限時間が来たら、新規のノーツ発生を止める（今落ちている分は最後まで処理する）
+    if (!this.aonoriSpawningDone && elapsedSeconds - this.aonoriSessionStartedAt >= AONORI_SESSION_DURATION) {
+      this.aonoriSpawningDone = true;
+    }
+
+    if (!this.aonoriSpawningDone && elapsedSeconds - this.aonoriLastSpawnAt >= AONORI_SPAWN_INTERVAL) {
+      this.aonoriLastSpawnAt = elapsedSeconds;
+      this._spawnAonoriNote(width, height);
+    }
 
     const judgmentY = height * AONORI_JUDGMENT_Y_RATIO;
     const missY = judgmentY + height * AONORI_MISS_MARGIN_RATIO;
-    if (this.currentAonoriNote.y >= missY) {
-      // 判定ラインを通り過ぎた：ミス（0点）扱いにして次のノーツへ
-      this.currentAonoriNote = null;
-      this._nextAonoriSpawnAt = elapsedSeconds + AONORI_SPAWN_GAP;
+    for (const note of this.fallingNotes) {
+      note.y += height * AONORI_FALL_SPEED_RATIO * deltaSeconds;
+    }
+    // 判定ラインを通り過ぎたノーツはミス（0点）扱いで消える
+    this.fallingNotes = this.fallingNotes.filter((note) => note.y < missY);
+
+    // フィードバック文字（「グレイト！」等）の経過時間を進める
+    for (const f of this.aonoriFeedback) {
+      f.age += deltaSeconds;
+    }
+    this.aonoriFeedback = this.aonoriFeedback.filter((f) => f.age < 0.6);
+
+    if (this.aonoriSpawningDone && this.fallingNotes.length === 0) {
+      this.lastScore = this.aonoriScore;
+      this.totalScore += this.aonoriScore;
+      this._bounceScore();
+      this._enterStage(STAGE.AONORI_RESULT, elapsedSeconds);
     }
   }
 
@@ -232,11 +278,13 @@ export class AdultToppingPhase {
     }
     if (this.stage === STAGE.EXPLAIN_AONORI) {
       playSfx(SOUNDS.start);
-      this.aonoriNotesSpawned = 0;
       this.aonoriScore = 0;
-      this.currentAonoriNote = null;
+      this.fallingNotes = [];
       this.aonoriPlaced = [];
-      this._nextAonoriSpawnAt = null;
+      this.aonoriFeedback = [];
+      this.aonoriSessionStartedAt = null;
+      this.aonoriLastSpawnAt = null;
+      this.aonoriSpawningDone = false;
       this._enterStage(STAGE.AONORI_PLAY, elapsedSeconds);
       return;
     }
@@ -247,31 +295,68 @@ export class AdultToppingPhase {
   }
 
   _handleAonoriTap(x, y, elapsedSeconds, width, height) {
-    if (!this.currentAonoriNote) return;
+    if (this.fallingNotes.length === 0) return;
 
     const hitRadius = width * AONORI_HIT_RADIUS_RATIO;
-    const dist = Math.hypot(x - this.currentAonoriNote.x, y - this.currentAonoriNote.y);
-    if (dist > hitRadius) return; // ノーツから離れた場所をタップしても無視する
+
+    // 画面上にある複数のノーツのうち、タップ位置に一番近いものを探す
+    let closest = null;
+    let closestDist = Infinity;
+    for (const note of this.fallingNotes) {
+      const d = Math.hypot(x - note.x, y - note.y);
+      if (d < closestDist) {
+        closestDist = d;
+        closest = note;
+      }
+    }
+    if (!closest || closestDist > hitRadius) return; // ノーツから離れた場所をタップしても無視する
 
     const judgmentY = height * AONORI_JUDGMENT_Y_RATIO;
-    const tolerance = height * AONORI_ZONE_TOLERANCE_RATIO;
-    const distFromZone = Math.abs(this.currentAonoriNote.y - judgmentY);
-    const accuracy = Math.max(1 - distFromZone / (tolerance * 3), 0);
-    const score = Math.round(100 * accuracy);
+    const greatTolerance = height * AONORI_GREAT_TOLERANCE_RATIO;
+    const goodTolerance = height * AONORI_GOOD_TOLERANCE_RATIO;
+    const distFromZone = Math.abs(closest.y - judgmentY);
+
+    let score = null;
+    let label = null;
+    let color = null;
+    if (distFromZone <= greatTolerance) {
+      score = AONORI_GREAT_SCORE;
+      label = "グレイト！";
+      color = "#ffd166";
+    } else if (distFromZone <= goodTolerance) {
+      score = AONORI_GOOD_SCORE;
+      label = "グッド！";
+      color = "#8bd17c";
+    } else {
+      return; // タイミングが早すぎ/遅すぎ：ヒット扱いにせず、ノーツはそのまま落下を続ける
+    }
 
     this.aonoriScore += score;
-    playSfx(score >= 60 ? SOUNDS.clear : SOUNDS.toppingTap);
+    playSfx(label === "グレイト！" ? SOUNDS.clear : SOUNDS.toppingTap);
 
-    // 着地した粒として記録（見た目に残す）
-    this.aonoriPlaced.push({
-      x: this.currentAonoriNote.x,
-      y: this.currentAonoriNote.y,
-      size: 10 + Math.random() * 6,
-      rotation: Math.random() * Math.PI * 2,
-    });
+    // 着地した粒として記録（見た目に残す）＝ タップした場所に青のりをスプレーする
+    this._sprayAonoriFlakes(x, y, width);
 
-    this.currentAonoriNote = null;
-    this._nextAonoriSpawnAt = elapsedSeconds + AONORI_SPAWN_GAP;
+    this.aonoriFeedback.push({ x, y, text: label, color, age: 0 });
+
+    this.fallingNotes = this.fallingNotes.filter((n) => n !== closest);
+  }
+
+  // タップした場所を中心に、極座標を使ってランダムに青のりの粒を散らす
+  _sprayAonoriFlakes(x, y, width) {
+    const sprayRadius = width * 0.045; // 目安25px相当（画面幅に応じて調整）
+    const baseSize = width * 0.007;
+    for (let i = 0; i < AONORI_SPRAY_COUNT; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const r = Math.random() * sprayRadius;
+      const fx = x + Math.cos(angle) * r;
+      const fy = y + Math.sin(angle) * r;
+      const sizeX = baseSize * (0.7 + Math.random() * 0.9);
+      const sizeY = baseSize * (0.3 + Math.random() * 0.5); // 偏平にして「フレーク感」を出す
+      const rotation = Math.random() * Math.PI * 2;
+      const color = AONORI_COLORS[Math.floor(Math.random() * AONORI_COLORS.length)];
+      this.aonoriPlaced.push({ x: fx, y: fy, sizeX, sizeY, rotation, color });
+    }
   }
 
   // ---- なぞり操作（ドラッグ） ----
@@ -402,7 +487,7 @@ export class AdultToppingPhase {
     // あおのり：着地済みの粒はどのステージでも描き続ける
     if (this.aonoriPlaced.length > 0) {
       for (const flake of this.aonoriPlaced) {
-        this._renderAonoriFlake(ctx, flake.x, flake.y, flake.size, flake.rotation);
+        this._renderAonoriFlakeAt(ctx, flake);
       }
     }
 
@@ -426,7 +511,8 @@ export class AdultToppingPhase {
       this._renderExplain(ctx, width, height, "あおのりリズムゲーム", [
         "上から降ってくるあおのりを",
         "判定ラインに重なった瞬間タップ！",
-        `全部で${AONORI_NOTE_COUNT}個、位置とタイミング両方が大事`,
+        "ジャストで「グレイト」、少しずれても「グッド」",
+        `${AONORI_SESSION_DURATION}秒間、たくさんヒットさせよう`,
       ]);
     }
 
@@ -623,28 +709,19 @@ export class AdultToppingPhase {
     ctx.restore();
   }
 
-  // あおのりプレイ中：判定ライン・落ちてくるノーツを描画
+  // あおのりプレイ中：判定ライン・複数の落ちてくるノーツを描画
   _renderAonoriPlay(ctx, width, height, elapsedSeconds) {
     const judgmentY = height * AONORI_JUDGMENT_Y_RATIO;
-    const tolerance = height * AONORI_ZONE_TOLERANCE_RATIO;
+    const greatTolerance = height * AONORI_GREAT_TOLERANCE_RATIO;
+    const goodTolerance = height * AONORI_GOOD_TOLERANCE_RATIO;
 
-    // 見出し
+    // 判定ライン（帯＋点滅）：グレイトゾーンを強調し、外側にグッドゾーンを薄く表示
+    const pulse = 0.5 + 0.5 * Math.sin(elapsedSeconds * 6);
     ctx.save();
-    ctx.textAlign = "center";
-    ctx.font = "bold 20px sans-serif";
-    ctx.fillStyle = "rgba(90,45,12,0.75)";
-    const headingText = `${Math.min(this.aonoriNotesSpawned, AONORI_NOTE_COUNT)} / ${AONORI_NOTE_COUNT}`;
-    const metrics = ctx.measureText(headingText);
-    const barW = metrics.width + 28;
-    ctx.beginPath();
-    ctx.roundRect(width / 2 - barW / 2, height * 0.08 - 26, barW, 38, 18);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillText(headingText, width / 2, height * 0.08);
+    ctx.fillStyle = "rgba(139,209,124,0.18)";
+    ctx.fillRect(0, judgmentY - goodTolerance, width, goodTolerance * 2);
     ctx.restore();
 
-    // 判定ライン（帯＋点滅）
-    const pulse = 0.5 + 0.5 * Math.sin(elapsedSeconds * 6);
     ctx.save();
     ctx.strokeStyle = `rgba(255,209,102,${0.6 + 0.4 * pulse})`;
     ctx.lineWidth = 4;
@@ -657,52 +734,71 @@ export class AdultToppingPhase {
     ctx.stroke();
     ctx.restore();
 
-    // 着地済みの粒（すでに描画済みなのでここでは何もしない。ノーツ本体のみ描く）
-    if (this.currentAonoriNote) {
-      this._renderAonoriFlake(ctx, this.currentAonoriNote.x, this.currentAonoriNote.y, 15, elapsedSeconds * 2);
+    // 落下中のノーツ（複数同時に存在しうる）
+    for (const note of this.fallingNotes) {
+      this._renderFallingAonoriNote(ctx, note.x, note.y, elapsedSeconds);
 
-      // ノーツの近さに応じて、判定ラインの一部がハイライトされる
-      const distFromZone = Math.abs(this.currentAonoriNote.y - judgmentY);
-      if (distFromZone < tolerance * 3) {
-        const alpha = 1 - distFromZone / (tolerance * 3);
+      const distFromZone = Math.abs(note.y - judgmentY);
+      if (distFromZone < goodTolerance) {
+        const isGreat = distFromZone <= greatTolerance;
         ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.strokeStyle = "#4caf50";
-        ctx.lineWidth = 6;
+        ctx.globalAlpha = 1 - distFromZone / goodTolerance;
+        ctx.strokeStyle = isGreat ? "#ffd166" : "#4caf50";
+        ctx.lineWidth = 5;
         ctx.beginPath();
-        ctx.arc(this.currentAonoriNote.x, judgmentY, 22, 0, Math.PI * 2);
+        ctx.arc(note.x, judgmentY, 24, 0, Math.PI * 2);
         ctx.stroke();
         ctx.restore();
       }
     }
+
+    // 「グレイト！」「グッド！」の一瞬のフィードバック文字
+    for (const f of this.aonoriFeedback) {
+      const progress = f.age / 0.6;
+      const alpha = 1 - progress;
+      const riseY = f.y - progress * 40;
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.textAlign = "center";
+      ctx.font = "bold 20px sans-serif";
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#5a2d0c";
+      ctx.strokeText(f.text, f.x, riseY);
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, f.x, riseY);
+      ctx.restore();
+    }
   }
 
-  // あおのりの粒（緑の斑点入りの不規則な形）を描く
-  _renderAonoriFlake(ctx, x, y, size, rotation) {
+  // 落下中のノーツ本体（回転しながら落ちる、代表的な1粒として表現）
+  _renderFallingAonoriNote(ctx, x, y, elapsedSeconds) {
+    const size = (this._lastWidth || 400) * 0.028;
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(rotation);
-    ctx.shadowColor = "rgba(0,0,0,0.3)";
-    ctx.shadowBlur = 4;
-    ctx.shadowOffsetY = 2;
-
-    ctx.fillStyle = "#2e6b2e";
+    ctx.rotate(elapsedSeconds * 3);
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 3;
+    ctx.shadowOffsetY = 1.5;
+    ctx.fillStyle = "#33691e";
     ctx.beginPath();
-    ctx.ellipse(0, 0, size, size * 0.6, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, size, size * 0.4, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  }
 
-    // 斑点（濃淡で青のりらしい質感を出す）
-    ctx.fillStyle = "#1c4d1c";
-    for (const [dx, dy] of [[-0.3, 0], [0.2, -0.2], [0.1, 0.25]]) {
-      ctx.beginPath();
-      ctx.ellipse(dx * size, dy * size, size * 0.18, size * 0.12, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = "rgba(255,255,255,0.25)";
+  // 青のりの粒（多色ブレンド・いびつな楕円・薄い影）を1粒描く
+  // 仕様: 単なる緑の丸ドットにせず、フレークらしい歪み・回転・色のばらつきを持たせる
+  _renderAonoriFlakeAt(ctx, flake) {
+    ctx.save();
+    ctx.translate(flake.x, flake.y);
+    ctx.rotate(flake.rotation);
+    ctx.shadowColor = "rgba(0,0,0,0.4)";
+    ctx.shadowBlur = 1;
+    ctx.shadowOffsetY = 0.5;
+    ctx.fillStyle = flake.color;
     ctx.beginPath();
-    ctx.ellipse(-size * 0.2, -size * 0.15, size * 0.25, size * 0.12, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, flake.sizeX, flake.sizeY, 0, 0, Math.PI * 2);
     ctx.fill();
-
     ctx.restore();
   }
 

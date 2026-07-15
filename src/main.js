@@ -140,7 +140,40 @@ function renderUI() {
     scoreAgeLabel.style.cssText = "font-size:13px;font-weight:bold;color:#fff;background:#5a2d0c;padding:4px 10px;border-radius:999px;";
     scoreRow.append(scoreBtn, scoreAgeLabel);
 
-    wrap.append(logoImg, title, simpleRow, scoreRow);
+    // ---------- デバッグメニュー（開発中のテスト用。折りたたみ表示） ----------
+    const debugToggle = document.createElement("div");
+    debugToggle.textContent = "🛠 テスト用メニュー";
+    debugToggle.style.cssText = "font-size:12px;color:#a3866f;cursor:pointer;margin-top:8px;text-decoration:underline;";
+
+    const debugPanel = document.createElement("div");
+    debugPanel.style.cssText = "display:none;flex-direction:column;gap:6px;align-items:center;background:rgba(255,255,255,0.7);padding:10px 14px;border-radius:12px;";
+
+    debugToggle.onclick = () => {
+      debugPanel.style.display = debugPanel.style.display === "none" ? "flex" : "none";
+    };
+
+    const debugButtons = [
+      { label: "ひっくり返し単体", action: () => startAdultCooking({ debugSingleCycle: true }) },
+      { label: "ソース単体", action: () => startDebugTopping("sauce") },
+      { label: "マヨネーズ単体", action: () => startDebugTopping("mayo") },
+      { label: "あおのり単体", action: () => startDebugTopping("aonori") },
+      { label: "かつおぶし（未実装）", action: null },
+    ];
+    debugButtons.forEach(({ label, action }) => {
+      const btn = document.createElement("button");
+      btn.textContent = label;
+      btn.style.cssText = "font-size:12px;padding:6px 12px;border-radius:8px;border:1px solid #a3866f;background:#fff;color:#5a2d0c;cursor:pointer;";
+      if (!action) {
+        btn.disabled = true;
+        btn.style.opacity = "0.5";
+        btn.style.cursor = "not-allowed";
+      } else {
+        btn.onclick = action;
+      }
+      debugPanel.appendChild(btn);
+    });
+
+    wrap.append(logoImg, title, simpleRow, scoreRow, debugToggle, debugPanel);
     uiLayer.appendChild(wrap);
   }
 }
@@ -165,10 +198,16 @@ function startCooking() {
   renderUI();
 }
 
-function startAdultCooking() {
+function startAdultCooking({ debugSingleCycle = false } = {}) {
   state.scene = SCENES.ADULT_COOKING;
   adultCookingPhase = new AdultCookingPhase({
+    debugSingleCycle,
     onComplete: (cookingScore) => {
+      if (debugSingleCycle) {
+        // デバッグ時：トッピングフェーズには進まず、そのままタイトルに戻す
+        resetGame();
+        return;
+      }
       state.scene = SCENES.ADULT_TOPPING;
       adultToppingPhase = new AdultToppingPhase({
         initialScore: cookingScore,
@@ -177,6 +216,20 @@ function startAdultCooking() {
         },
       });
       renderUI();
+    },
+  });
+  renderUI();
+}
+
+// デバッグ用：ソース・マヨネーズ・あおのりのいずれか1つだけを単体でテストする
+function startDebugTopping(gameName) {
+  state.scene = SCENES.ADULT_TOPPING;
+  adultToppingPhase = new AdultToppingPhase({
+    startAt: gameName,
+    debugSingleGame: true,
+    initialScore: 0,
+    onFinish: () => {
+      resetGame();
     },
   });
   renderUI();

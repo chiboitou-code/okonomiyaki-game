@@ -36,8 +36,14 @@ export class AdultCookingPhase {
    * @param {object} opts
    * @param {(totalScore: number) => void} opts.onComplete - 全工程終了時（合計スコアを渡す）
    */
-  constructor({ onComplete }) {
+  /**
+   * @param {object} opts
+   * @param {(totalScore: number) => void} opts.onComplete - 全工程終了時（合計スコアを渡す）
+   * @param {boolean} [opts.debugSingleCycle] - デバッグ用：1セットだけで終わらせる
+   */
+  constructor({ onComplete, debugSingleCycle = false }) {
     this.onComplete = onComplete;
+    this.repeatCount = debugSingleCycle ? 1 : REPEAT_COUNT;
     this.cycleIndex = 0;
     this.stage = STAGE.EXPLAIN;
     this.stageEnteredAt = performance.now() / 1000;
@@ -202,7 +208,7 @@ export class AdultCookingPhase {
     if (this.stage === STAGE.POWER_RESULT) {
       if (elapsedSeconds - this.stageEnteredAt >= RESULT_PAUSE) {
         this.cycleIndex += 1;
-        if (this.cycleIndex >= REPEAT_COUNT) {
+        if (this.cycleIndex >= this.repeatCount) {
           this._enterStage(STAGE.FINISHED, elapsedSeconds);
           this.onComplete(this.totalScore);
         } else {
@@ -296,7 +302,7 @@ export class AdultCookingPhase {
     ctx.save();
     ctx.font = "bold 20px sans-serif";
     ctx.textAlign = "center";
-    const headingText = `${this.cycleIndex + 1} / ${REPEAT_COUNT} セット目`;
+    const headingText = `${this.cycleIndex + 1} / ${this.repeatCount} セット目`;
     const metrics = ctx.measureText(headingText);
     const barW = metrics.width + 32;
     ctx.fillStyle = "rgba(90,45,12,0.75)";
@@ -379,7 +385,7 @@ export class AdultCookingPhase {
       `制限時間${LEVER_TIME_LIMIT}秒、中央に近く・早いほど高得点`,
       "そのあとパワーメーター：",
       `制限時間内に${POWER_TARGET_TAPS}回連打しよう！`,
-      `これを${REPEAT_COUNT}セットくり返します（2セット目は速くなる）`,
+      `これを${this.repeatCount}セットくり返します（2セット目は速くなる）`,
     ];
     lines.forEach((line, i) => {
       ctx.fillText(line, width / 2, height * 0.42 + i * 28);
