@@ -7,7 +7,7 @@ export class TimingGauge {
    * @param {number} opts.speed - 1秒あたりに進む割合（大きいほど速い）
    * @param {number} opts.zoneWidth - ジャストゾーンの幅（0〜1）。仕様書では30〜40%を推奨
    */
-  constructor({ speed = 0.6, zoneWidth = 0.35 } = {}) {
+  constructor({ speed = 0.7, zoneWidth = 0.35 } = {}) {
     this.speed = speed;
     this.zoneStart = (1 - zoneWidth) / 2;
     this.zoneEnd = this.zoneStart + zoneWidth;
@@ -26,9 +26,16 @@ export class TimingGauge {
     }
   }
 
-  // 現在位置でタップされた時の判定：ジャストゾーン内なら成功、外れなら失敗
+  // 現在位置でタップされた時の判定：
+  // ジャストゾーン内なら、中央に近い順に "perfect" > "great" > "good"、ゾーン外は "fail"
   judge() {
-    const inZone = this.position >= this.zoneStart && this.position <= this.zoneEnd;
-    return inZone ? "success" : "fail";
+    const zoneHalfWidth = (this.zoneEnd - this.zoneStart) / 2;
+    const distFromCenter = Math.abs(this.position - 0.5);
+    if (distFromCenter > zoneHalfWidth) return "fail";
+
+    const ratio = distFromCenter / zoneHalfWidth; // 0(中央)〜1(ゾーンの端)
+    if (ratio <= 0.33) return "perfect";
+    if (ratio <= 0.66) return "great";
+    return "good";
   }
 }

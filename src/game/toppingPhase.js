@@ -2,6 +2,7 @@ import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
+import gsap from "gsap";
 
 export const TOPPING_TYPES = {
   SAUCE: "sauce",
@@ -60,14 +61,29 @@ const FLASH_DURATION = 0.25; // 秒。トッピングが乗った瞬間の白フ
 const PERFECT_POP_DURATION = 0.4; // 秒。「パーフェクト！」がポンと出てくるまでの時間
 const PERFECT_HOLD_DURATION = 1.0; // 秒。「パーフェクト！」を表示しておく時間（この後クリア画面に切り替わる）
 const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
+const TOPPING_TAP_SCORE = 100; // トッピング1回ごとの得点（特にゲーム性は無いので固定得点）
+const PRAISE_DISPLAY_DURATION = 1.0;
 
+const PRAISE_MESSAGES = [
+  "じょうず！",
+  "いいね！",
+  "おいしそう！",
+  "すごい！",
+  "やったね！",
+];
 export class ToppingPhase {
   /**
    * @param {object} opts
    * @param {() => void} opts.onRetry - 「かんせい」画面がタップされた時（呼び出し側でタイトル等に戻す）
+   * @param {number} [opts.initialScore] - それ以前のフェーズ（ひっくり返すフェーズ）からの持ち越しスコア
    */
-  constructor({ onRetry }) {
+  constructor({ onRetry, initialScore = 0 }) {
     this.onRetry = onRetry;
+    this.totalScore = initialScore;
+    this.scoreBounce = { scale: 1, flash: 0 };
+    this.praiseMessage = null;
+    this.praiseShownAt = 0;
+    this.scoreDisplayAt = 0; // スコア表示の開始時刻
     this.stepIndex = 0; // 今どのトッピングの番か（0〜3）
     this.active = {
       [TOPPING_TYPES.SAUCE]: false,
@@ -160,6 +176,115 @@ export class ToppingPhase {
     this.justAppliedAt = elapsedSeconds;
     this.flashAt = elapsedSeconds;
     this._spawnSparkles(step.type);
+
+    // 特にゲーム性は無いトッピングフェーズ：タップごとに固定得点を加算
+    this.totalScore += TOPPING_TAP_SCORE;
+
+    this.scoreDisplayAt = elapsedSeconds;
+
+    this._spawnPraise(elapsedSeconds);
+
+    this._bounceScore();
+  }
+
+  // 点数が入った時に、スコア表示を弾ませる
+  _bounceScore() {
+    gsap.killTweensOf(this.scoreBounce);
+    gsap.timeline()
+      .to(this.scoreBounce, { scale: 1.7, flash: 1, duration: 0.12, ease: "back.out(3)" })
+      .to(this.scoreBounce, { scale: 1, duration: 0.6, ease: "elastic.out(1.2, 0.25)" }, "<")
+      .to(this.scoreBounce, { flash: 0, duration: 0.4, ease: "power1.out" }, "<0.1");
+  }
+
+  _spawnPraise(elapsedSeconds) {
+    this.praiseMessage =
+      PRAISE_MESSAGES[Math.floor(Math.random() * PRAISE_MESSAGES.length)];
+
+    this.praiseShownAt = elapsedSeconds;
+  }
+
+  _renderScoreBadge(ctx, width, height, elapsedSeconds) {
+    // トッピングをタップした直後だけ表示
+    if (this.justAppliedAt === null) {
+      return;
+    }
+
+    const age = elapsedSeconds - this.justAppliedAt;
+    if (age > PRAISE_DISPLAY_DURATION) {
+      return;
+    }
+
+    ctx.save();
+    const scoreText = `${TOPPING_TAP_SCORE} 点`;
+    ctx.font = "bold 26px sans-serif";
+    ctx.textAlign = "center";
+    const scoreMetrics = ctx.measureText(scoreText);
+    const scoreBarW = scoreMetrics.width + 24;
+    const scoreBarH = 40;
+    const centerX = width / 2;
+    const barY = height * 0.76; // お好み焼きの下あたり
+    const flash = this.scoreBounce.flash;
+    const bgR = Math.round(90 + (255 - 90) * flash);
+    const bgG = Math.round(45 + (207 - 45) * flash);
+    const bgB = Math.round(12 + (92 - 12) * flash);
+    ctx.fillStyle = `rgba(${bgR},${bgG},${bgB},0.9)`;
+    ctx.beginPath();
+    ctx.roundRect(centerX - scoreBarW / 2, barY - scoreBarH / 2, scoreBarW, scoreBarH, 12);
+    ctx.fill();
+
+    ctx.translate(centerX, barY + 9);
+    ctx.scale(this.scoreBounce.scale, this.scoreBounce.scale);
+    ctx.fillStyle = "#ffcf5c";
+    ctx.fillText(scoreText, 0, 0);
+    ctx.restore();
+  }
+
+  _renderTotalScoreBadge(ctx, width, height) {
+    ctx.save();
+
+    const scoreText = `${this.totalScore}点`;
+
+    ctx.font = "bold 24px sans-serif";
+    ctx.textAlign = "right";
+
+    const scoreMetrics = ctx.measureText(scoreText);
+
+    const scoreBarW = scoreMetrics.width + 28;
+    const scoreBarH = 40;
+
+    const scoreRightX = width - 12;
+    const scoreTopY = 16;
+
+    const flash = this.scoreBounce.flash;
+
+    const bgR = Math.round(90 + (255 - 90) * flash);
+    const bgG = Math.round(45 + (207 - 45) * flash);
+    const bgB = Math.round(12 + (92 - 12) * flash);
+
+    ctx.fillStyle = `rgba(${bgR},${bgG},${bgB},0.9)`;
+
+    ctx.beginPath();
+    ctx.roundRect(
+      scoreRightX - scoreBarW,
+      scoreTopY,
+      scoreBarW,
+      scoreBarH,
+      12
+    );
+    ctx.fill();
+
+    ctx.translate(
+      scoreRightX - scoreBarW / 2,
+      scoreTopY + scoreBarH / 2 + 6
+    );
+
+    ctx.scale(this.scoreBounce.scale, this.scoreBounce.scale);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.fillText(scoreText, 0, 0);
+
+    ctx.restore();
   }
 
   _spawnSparkles(type) {
@@ -199,15 +324,28 @@ export class ToppingPhase {
         ctx.restore();
       }
 
-      // 下部の帯＋「もういちど」の文字
+      // 下部の帯＋スコア＋「もういちど」の文字
       ctx.save();
       ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillRect(0, height * 0.85, width, height * 0.15);
-      ctx.fillStyle = "#ffcf5c";
-      ctx.font = "bold 26px sans-serif";
+      ctx.fillRect(0, height * 0.78, width, height * 0.22);
+      
+      // 大きなスコア表示
+      const scoreText = `${this.totalScore}点！！`;
+      ctx.font = "bold 48px sans-serif";
       ctx.textAlign = "center";
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = "#5a2d0c";
+      ctx.strokeText(scoreText, width / 2, height * 0.84);
+      ctx.fillStyle = "#ffcf5c";
+      ctx.fillText(scoreText, width / 2, height * 0.84);
+      
+      // 「もういちど」
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 24px sans-serif";
       ctx.fillText("もういちど", width / 2, height * 0.93);
       ctx.restore();
+
+      this._renderScoreBadge(ctx, width, height);
       return;
     }
 
@@ -235,6 +373,9 @@ export class ToppingPhase {
       ctx.ellipse(bodyCenterX, bodyCenterY, w / 2, bodyH / 2, 0, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    this._renderScoreBadge(ctx, width, height);
+    this._renderTotalScoreBadge(ctx, width, height);
 
     // これまでに乗せたトッピングを重ねて描画
     for (const type of Object.values(TOPPING_TYPES)) {
@@ -309,6 +450,45 @@ export class ToppingPhase {
         ctx.globalAlpha = growScale;
         ctx.drawImage(img, x - charW / 2, y - charH / 2, charW, charH);
         ctx.restore();
+      }
+    }
+
+    if (this.praiseMessage) {
+      const age = elapsedSeconds - this.praiseShownAt;
+
+      if (age < PRAISE_DISPLAY_DURATION) {
+
+        ctx.save();
+
+        ctx.globalAlpha = 1 - age / PRAISE_DISPLAY_DURATION;
+
+        ctx.textAlign = "center";
+
+        ctx.font = "bold 48px sans-serif";
+
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = "#5a2d0c";
+
+        ctx.strokeText(
+          this.praiseMessage,
+          width / 2,
+          height * 0.25
+        );
+
+        ctx.fillStyle = "#ffd166";
+
+        ctx.fillText(
+          this.praiseMessage,
+          width / 2,
+          height * 0.25
+        );
+
+        ctx.restore();
+
+      } else {
+
+        this.praiseMessage = null;
+
       }
     }
 

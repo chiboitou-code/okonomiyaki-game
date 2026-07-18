@@ -143,7 +143,7 @@ function renderUI() {
     // ---------- デバッグメニュー（開発中のテスト用。折りたたみ表示） ----------
     const debugToggle = document.createElement("div");
     debugToggle.textContent = "🛠 テスト用メニュー";
-    debugToggle.style.cssText = "font-size:12px;color:#a3866f;cursor:pointer;margin-top:8px;text-decoration:underline;";
+    debugToggle.style.cssText = "font-size:12px;color:#a3866f;cursor:pointer;margin-top:8px;text-decoration:underline;pointer-events:auto;";
 
     const debugPanel = document.createElement("div");
     debugPanel.style.cssText = "display:none;flex-direction:column;gap:6px;align-items:center;background:rgba(255,255,255,0.7);padding:10px 14px;border-radius:12px;";
@@ -182,9 +182,10 @@ function renderUI() {
 function startCooking() {
   state.scene = SCENES.COOKING;
   cookingPhase = new CookingPhase({
-    onComplete: () => {
+    onComplete: (results, cookingScore) => {
       state.scene = SCENES.TOPPING;
       toppingPhase = new ToppingPhase({
+        initialScore: cookingScore,
         onRetry: () => {
           resetGame();
         },
@@ -260,7 +261,7 @@ canvas.addEventListener("pointerdown", (e) => {
     adultCookingPhase.handleTap(t);
   } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
     const { x, y } = getPos(e);
-    adultToppingPhase.handleTap(t);
+    adultToppingPhase.handleTap(t, width, height);
     adultToppingPhase.handlePointerDown(x, y, t, width, height);
   } else if (state.scene === SCENES.TOPPING && toppingPhase) {
     toppingPhase.handleTap(t);
