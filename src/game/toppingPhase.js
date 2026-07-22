@@ -2,6 +2,7 @@ import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
+import { isShareSupported, shareScore } from "./share.js";
 import gsap from "gsap";
 
 export const TOPPING_TYPES = {
@@ -63,6 +64,8 @@ const PERFECT_HOLD_DURATION = 1.0; // 秒。「パーフェクト！」を表示
 const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
 const TOPPING_TAP_SCORE = 100; // トッピング1回ごとの得点（特にゲーム性は無いので固定得点）
 const PRAISE_DISPLAY_DURATION = 1.0;
+const SECRET_MODE_SCORE_THRESHOLD = 800; // このスコア以上でクリア画面に「シークレットモード」への入口が出る
+const SHARE_BUTTON_RADIUS = 26; // クリア画面右上の「シェア」ボタンの半径（タップ判定にも使う）
 
 const PRAISE_MESSAGES = [
   "じょうず！",
@@ -76,9 +79,11 @@ export class ToppingPhase {
    * @param {object} opts
    * @param {() => void} opts.onRetry - 「かんせい」画面がタップされた時（呼び出し側でタイトル等に戻す）
    * @param {number} [opts.initialScore] - それ以前のフェーズ（ひっくり返すフェーズ）からの持ち越しスコア
+   * @param {() => void} [opts.onSecretMode] - 800点以上でクリア画面に出る「シークレットモード」をタップした時
    */
-  constructor({ onRetry, initialScore = 0 }) {
+  constructor({ onRetry, initialScore = 0, onSecretMode = null }) {
     this.onRetry = onRetry;
+    this.onSecretMode = onSecretMode;
     this.totalScore = initialScore;
     this.scoreBounce = { scale: 1, flash: 0 };
     this.praiseMessage = null;
@@ -160,10 +165,28 @@ export class ToppingPhase {
     this.confetti = this.confetti.filter((c) => c.y < 1.1);
   }
 
-  handleTap(elapsedSeconds) {
+  handleTap(elapsedSeconds, x, y, width, height) {
     if (this.allDone) {
-      // 「かんせい」画面をタップ → リトライ（呼び出し側で画面遷移）
-      playSfx(SOUNDS.retryTap);
+      // 右上の「シェア」ボタン
+      if (isShareSupported() && x !== undefined && width !== undefined) {
+        const shareX = width - 36;
+        const shareY = 36;
+        const dist = Math.hypot(x - shareX, y - shareY);
+        if (dist <= SHARE_BUTTON_RADIUS) {
+          shareScore(this.totalScore, "ゲーム");
+          return;
+        }
+      }
+
+      const secretAvailable = this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
+      if (secretAvailable && height !== undefined && y >= height * 0.95) {
+        // 「シークレットモード（むずかしい）」をタップ
+        playSfx(SOUNDS.flip);
+        this.onSecretMode();
+        return;
+      }
+      // それ以外の場所（「かんせい」画面本体）をタップ → リトライ
+      playSfx(SOUNDS.start);
       this.onRetry();
       return;
     }
@@ -287,6 +310,24 @@ export class ToppingPhase {
     ctx.restore();
   }
 
+  // クリア画面右上の「シェア」ボタン（Web Share API非対応のブラウザでは表示しない）
+  _renderShareButton(ctx, width) {
+    if (!isShareSupported()) return;
+    const x = width - 36;
+    const y = 36;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.beginPath();
+    ctx.arc(x, y, SHARE_BUTTON_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = "22px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#fff";
+    ctx.fillText("📤", x, y + 1);
+    ctx.restore();
+  }
+
   _spawnSparkles(type) {
     const color = SPARKLE_COLOR[type] || "#fff";
     for (let i = 0; i < SPARKLE_COUNT; i++) {
@@ -339,11 +380,20 @@ export class ToppingPhase {
       ctx.fillStyle = "#ffcf5c";
       ctx.fillText(scoreText, width / 2, height * 0.84);
       
-      // 「もういちど」
+      // 「もういちど」（800点以上ならシークレットモードへの入口も下に表示）
+      const secretAvailable = this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
       ctx.fillStyle = "#fff";
       ctx.font = "bold 24px sans-serif";
-      ctx.fillText("もういちど", width / 2, height * 0.93);
+      ctx.fillText("もういちど", width / 2, height * (secretAvailable ? 0.89 : 0.93));
+
+      if (secretAvailable) {
+        ctx.fillStyle = "#ffd166";
+        ctx.font = "bold 16px sans-serif";
+        ctx.fillText("シークレットモード（むずかしい）", width / 2, height * 0.965);
+      }
       ctx.restore();
+
+      this._renderShareButton(ctx, width);
 
       this._renderScoreBadge(ctx, width, height);
       return;

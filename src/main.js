@@ -10,6 +10,17 @@ import { SOUNDS } from "./game/sounds.js";
 unlockAudioOnFirstTap();
 let bgmStarted = false;
 
+// ---------- シークレットモード（旧スコアモード）解放：タイトルロゴを3回タップで出現 ----------
+const SECRET_MODE_KEY = "okonomiyaki_secret_mode_unlocked";
+let secretModeUnlocked = false;
+try {
+  secretModeUnlocked = localStorage.getItem(SECRET_MODE_KEY) === "1";
+} catch (e) {
+  // プライベートモード等でlocalStorageが使えない場合は毎回タップで解放する
+}
+let logoTapCount = 0;
+let logoTapResetTimer = null;
+
 const canvas = document.getElementById("game-canvas");
 const ctx = canvas.getContext("2d");
 const uiLayer = document.getElementById("ui-layer");
@@ -103,9 +114,37 @@ function renderUI() {
       logoImg.remove();
     };
 
+    const logoTapArea = document.createElement("div");
+    logoTapArea.style.cssText = "display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;";
+    logoTapArea.onclick = () => {
+      logoTapCount += 1;
+      if (logoTapResetTimer) clearTimeout(logoTapResetTimer);
+      logoTapResetTimer = setTimeout(() => {
+        logoTapCount = 0;
+      }, 1500);
+      if (logoTapCount >= 3) {
+        logoTapCount = 0;
+        if (logoTapResetTimer) {
+          clearTimeout(logoTapResetTimer);
+          logoTapResetTimer = null;
+        }
+        if (!secretModeUnlocked) {
+          secretModeUnlocked = true;
+          try {
+            localStorage.setItem(SECRET_MODE_KEY, "1");
+          } catch (e) {
+            // 保存できなくても今回のセッション中は解放されたままにする
+          }
+          playSfx(SOUNDS.flip);
+          renderUI();
+        }
+      }
+    };
+    logoTapArea.append(logoImg, title);
+
     const simpleBtn = document.createElement("button");
     simpleBtn.className = "btn";
-    simpleBtn.textContent = "シンプルモード";
+    simpleBtn.textContent = "ゲームをはじめる";
     simpleBtn.onclick = () => {
       playSfx(SOUNDS.start);
       if (!bgmStarted) {
@@ -116,15 +155,12 @@ function renderUI() {
     };
     const simpleRow = document.createElement("div");
     simpleRow.style.cssText = "display:flex;align-items:center;gap:10px;";
-    const simpleAgeLabel = document.createElement("span");
-    simpleAgeLabel.textContent = "3〜5才用";
-    simpleAgeLabel.style.cssText = "font-size:13px;font-weight:bold;color:#5a2d0c;background:#fff;padding:4px 10px;border-radius:999px;";
-    simpleRow.append(simpleBtn, simpleAgeLabel);
+    simpleRow.append(simpleBtn);
 
     const scoreBtn = document.createElement("button");
     scoreBtn.className = "btn";
-    scoreBtn.style.cssText = "background:#5a2d0c;box-shadow:0 4px 0 #3a1d08;";
-    scoreBtn.textContent = "スコアモード";
+    scoreBtn.style.cssText = "background:#5a2d0c;box-shadow:0 4px 0 #3a1d08;line-height:1.4;";
+    scoreBtn.innerHTML = 'シークレットモード<br><span style="font-size:11px;font-weight:normal;opacity:0.85;">（むずかしい）</span>';
     scoreBtn.onclick = () => {
       playSfx(SOUNDS.start);
       if (!bgmStarted) {
@@ -135,10 +171,7 @@ function renderUI() {
     };
     const scoreRow = document.createElement("div");
     scoreRow.style.cssText = "display:flex;align-items:center;gap:10px;";
-    const scoreAgeLabel = document.createElement("span");
-    scoreAgeLabel.textContent = "6〜8才用";
-    scoreAgeLabel.style.cssText = "font-size:13px;font-weight:bold;color:#fff;background:#5a2d0c;padding:4px 10px;border-radius:999px;";
-    scoreRow.append(scoreBtn, scoreAgeLabel);
+    scoreRow.append(scoreBtn);
 
     // ---------- デバッグメニュー（開発中のテスト用。折りたたみ表示） ----------
     const debugToggle = document.createElement("div");
@@ -172,7 +205,11 @@ function renderUI() {
       debugPanel.appendChild(btn);
     });
 
-    wrap.append(logoImg, title, simpleRow, scoreRow, debugToggle, debugPanel);
+    wrap.append(logoTapArea, simpleRow);
+    if (secretModeUnlocked) {
+      wrap.append(scoreRow);
+    }
+    wrap.append(debugToggle, debugPanel);
     uiLayer.appendChild(wrap);
   }
 }
@@ -187,6 +224,9 @@ function startCooking() {
         initialScore: cookingScore,
         onRetry: () => {
           resetGame();
+        },
+        onSecretMode: () => {
+          startAdultCooking();
         },
       });
       renderUI();
@@ -260,10 +300,11 @@ canvas.addEventListener("pointerdown", (e) => {
     adultCookingPhase.handleTap(t);
   } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
     const { x, y } = getPos(e);
-    adultToppingPhase.handleTap(t, width, height);
+    adultToppingPhase.handleTap(t, width, height, x, y);
     adultToppingPhase.handlePointerDown(x, y, t, width, height);
   } else if (state.scene === SCENES.TOPPING && toppingPhase) {
-    toppingPhase.handleTap(t);
+    const { x, y } = getPos(e);
+    toppingPhase.handleTap(t, x, y, width, height);
   }
 });
 

@@ -2,6 +2,7 @@ import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
+import { isShareSupported, shareScore } from "./share.js";
 import gsap from "gsap";
 
 // ---- 調整用の定数 ----
@@ -30,10 +31,12 @@ const SEASONING_SCORE_PER_TAP = {
 // カード表示エリア（画面上部、高さに対する比率）
 const SEASONING_CARD_ROW_TOP_RATIO = 0.1;
 const SEASONING_CARD_ROW_HEIGHT_RATIO = 0.12;
+const SEASONING_POPUP_LIFESPAN = 0.7; // 秒。「+20」等のポップが浮き上がって消えるまでの時間
 
 // あおのりの粒（従来のシンプルな楕円演出をそのまま流用）
 const AONORI_COLORS = ["#2e7d32", "#1b5e20", "#43a047", "#558b2f", "#33691e"];
-const AONORI_SPRAY_COUNT = 24; // 1タップで散らす粒の数（さらに倍増）
+const AONORI_SPRAY_COUNT = 48; // 1タップで散らす粒の数（さらに倍増）
+const AONORI_SPRAY_RADIUS_RATIO = 0.09; // 散布範囲（画面幅に対する比率、さらに倍増）
 
 // 枝豆（さや）の見た目パラメータ（画面幅に対する比率で管理。別AI生成コードのデザインを移植）
 const EDAMAME_SPRAY_RADIUS_RATIO = 0.08;
@@ -54,6 +57,7 @@ const KATSUOBUSHI_COLORS = [
 // 紙吹雪（クリア画面用）
 const CONFETTI_COLORS = ["#ff8a3d", "#ffd166", "#8bd17c", "#5eb0ef", "#ff6b9d"];
 const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
+const SHARE_BUTTON_RADIUS = 26; // クリア画面右上の「シェア」ボタンの半径（タップ判定にも使う）
 
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
@@ -135,6 +139,7 @@ export class AdultToppingPhase {
     this.seasoningTapCounts = { aonori: 0, edamame: 0, katsuobushi: 0 };
     this.seasoningPlaced = { aonori: [], edamame: [], katsuobushi: [] }; // 着地済みの粒（種類ごとに配列）
     this.seasoningDrawOrder = ["aonori", "edamame", "katsuobushi"]; // 描画順（配列の後ろほど手前・上に重なる）
+    this.seasoningScorePopups = []; // タップ毎に一瞬表示する「+20」等のポップ { x, y, text, color, age }
     this.seasoningSessionStartedAt = null;
 
     // クリア画面用
@@ -280,6 +285,12 @@ export class AdultToppingPhase {
     if (this.seasoningSessionStartedAt === null) {
       this.seasoningSessionStartedAt = elapsedSeconds;
     }
+
+    for (const popup of this.seasoningScorePopups) {
+      popup.age += deltaSeconds;
+    }
+    this.seasoningScorePopups = this.seasoningScorePopups.filter((p) => p.age < SEASONING_POPUP_LIFESPAN);
+
     const elapsed = elapsedSeconds - this.seasoningSessionStartedAt;
     if (elapsed >= SEASONING_TIME_LIMIT) {
       this.lastScore = this.seasoningScore;
@@ -291,7 +302,7 @@ export class AdultToppingPhase {
   }
 
   // ---- タップ（説明画面・結果画面などのシンプルな進行用） ----
-  handleTap(elapsedSeconds, width, height) {
+  handleTap(elapsedSeconds, width, height, x, y) {
     if (this.stage === STAGE.EXPLAIN_SAUCE) {
       playSfx(SOUNDS.start);
       this._enterStage(STAGE.SAUCE_TRACE, elapsedSeconds);
@@ -309,11 +320,22 @@ export class AdultToppingPhase {
       this.seasoningTapCounts = { aonori: 0, edamame: 0, katsuobushi: 0 };
       this.seasoningPlaced = { aonori: [], edamame: [], katsuobushi: [] };
       this.seasoningDrawOrder = ["aonori", "edamame", "katsuobushi"];
+      this.seasoningScorePopups = [];
       this.seasoningSessionStartedAt = null;
       this._enterStage(STAGE.SEASONING_PLAY, elapsedSeconds);
       return;
     }
     if (this.stage === STAGE.CLEAR) {
+      // 右上の「シェア」ボタン
+      if (isShareSupported() && x !== undefined && width !== undefined) {
+        const shareX = width - 36;
+        const shareY = 36;
+        const dist = Math.hypot(x - shareX, y - shareY);
+        if (dist <= SHARE_BUTTON_RADIUS) {
+          shareScore(this.totalScore, "シークレットモード");
+          return;
+        }
+      }
       // 「かんせい」画面をタップ → 呼び出し側でタイトルへ
       playSfx(SOUNDS.retryTap);
       this.onFinish();
@@ -371,9 +393,18 @@ export class AdultToppingPhase {
 
     const card = this.selectedCard;
     this.seasoningTapCounts[card] += 1;
-    this.seasoningScore += SEASONING_SCORE_PER_TAP[card];
+    const gained = SEASONING_SCORE_PER_TAP[card];
+    this.seasoningScore += gained;
     this._bounceScore();
     playSfx(SOUNDS.toppingTap);
+
+    this.seasoningScorePopups.push({
+      x,
+      y,
+      text: `+${gained}`,
+      color: CARD_FALLBACK_COLOR[card],
+      age: 0,
+    });
 
     if (card === "aonori") {
       this._sprayAonoriFlakes(x, y, width);
@@ -386,7 +417,7 @@ export class AdultToppingPhase {
 
   // 指定した場所を中心に、極座標を使ってランダムにあおのりの粒を散らす
   _sprayAonoriFlakes(x, y, width) {
-    const sprayRadius = width * 0.045; // 目安25px相当（画面幅に応じて調整）
+    const sprayRadius = width * AONORI_SPRAY_RADIUS_RATIO; // 散布範囲（さらに倍増）
     const baseSize = width * 0.007;
     for (let i = 0; i < AONORI_SPRAY_COUNT; i++) {
       const angle = Math.random() * Math.PI * 2;
@@ -447,9 +478,9 @@ export class AdultToppingPhase {
 
       // 1片の中での不均等な半透明度（線形グラデーション）
       const rgb = KATSUOBUSHI_COLORS[Math.floor(Math.random() * KATSUOBUSHI_COLORS.length)];
-      const alpha1 = Math.random() * 0.3 + 0.3;
-      const alpha2 = Math.random() * 0.3 + 0.6;
-      const alpha3 = Math.random() * 0.3 + 0.2;
+      const alpha1 = Math.random() * 0.2 + 0.55;
+      const alpha2 = Math.random() * 0.15 + 0.85;
+      const alpha3 = Math.random() * 0.25 + 0.5;
 
       // 影の設定（生成時に確定させ、毎フレーム同じ見た目で再描画できるようにする）
       const shadowBlur = width * (isDust ? 0.004 : 0.014);
@@ -738,6 +769,8 @@ export class AdultToppingPhase {
         ctx.fillText("まずカードをえらぼう！", width / 2, height * 0.25);
         ctx.restore();
       }
+
+      this._renderSeasoningScorePopups(ctx);
     }
 
     if (this.stage === STAGE.SEASONING_RESULT) {
@@ -1007,12 +1040,46 @@ export class AdultToppingPhase {
     ctx.restore();
   }
 
+  // タップ毎の「+20」等のポップ（浮き上がりながらフェードアウト）
+  _renderSeasoningScorePopups(ctx) {
+    for (const popup of this.seasoningScorePopups) {
+      const t = popup.age / SEASONING_POPUP_LIFESPAN; // 0〜1
+      const riseY = t * 44;
+      const alpha = 1 - t;
+      const scale = t < 0.2 ? 0.7 + (t / 0.2) * 0.5 : 1.2 - ((t - 0.2) / 0.8) * 0.2;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.translate(popup.x, popup.y - riseY);
+      ctx.scale(scale, scale);
+      ctx.textAlign = "center";
+      ctx.font = "bold 26px sans-serif";
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = "#000";
+      ctx.strokeText(popup.text, 0, 0);
+      ctx.fillStyle = popup.color;
+      ctx.fillText(popup.text, 0, 0);
+      ctx.restore();
+    }
+  }
+
   _renderScorePopup(ctx, width, height, label, score) {
     ctx.save();
     ctx.textAlign = "center";
-    ctx.fillStyle = "#e0552b";
+    ctx.font = "bold 22px sans-serif";
+    const labelW = ctx.measureText(label).width;
+    ctx.font = "bold 42px sans-serif";
+    const scoreW = ctx.measureText(`${score} 点`).width;
+    const badgeW = Math.max(labelW, scoreW) + 48;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.beginPath();
+    ctx.roundRect(width / 2 - badgeW / 2, height * 0.6, badgeW, height * 0.18, 16);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffcf5c";
     ctx.font = "bold 22px sans-serif";
     ctx.fillText(label, width / 2, height * 0.65);
+    ctx.fillStyle = "#fff";
     ctx.font = "bold 42px sans-serif";
     ctx.fillText(`${score} 点`, width / 2, height * 0.74);
     ctx.restore();
@@ -1134,6 +1201,26 @@ export class AdultToppingPhase {
     ctx.fillStyle = "#fff";
     ctx.font = "bold 24px sans-serif";
     ctx.fillText("タップしてタイトルへ", width / 2, height * 0.93);
+    ctx.restore();
+
+    this._renderShareButton(ctx, width);
+  }
+
+  // クリア画面右上の「シェア」ボタン（Web Share API非対応のブラウザでは表示しない）
+  _renderShareButton(ctx, width) {
+    if (!isShareSupported()) return;
+    const x = width - 36;
+    const y = 36;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.beginPath();
+    ctx.arc(x, y, SHARE_BUTTON_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.font = "22px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#fff";
+    ctx.fillText("📤", x, y + 1);
     ctx.restore();
   }
 

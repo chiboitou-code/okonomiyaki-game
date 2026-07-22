@@ -189,30 +189,39 @@ export class CookingPhase {
   _renderScorePopup(ctx, width, height, label) {
     ctx.save();
     ctx.textAlign = "center";
-    
+
     // ラベルを上部に大きく表示
     const color = COLOR_MAP[this.lastJudgeLabel];
     ctx.fillStyle = color;
     ctx.font = "bold 48px sans-serif";
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = "#5a2d0c";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#000";
     ctx.strokeText(label, width / 2, height * 0.22);
     ctx.fillText(label, width / 2, height * 0.22);
-    
+
     // 判定点を表示
-    ctx.fillStyle = "#e0552b";
     ctx.font = "bold 28px sans-serif";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText(`${this.lastBaseScore} 点`, width / 2, height * 0.38);
+    ctx.fillStyle = "#fff";
     ctx.fillText(`${this.lastBaseScore} 点`, width / 2, height * 0.38);
-    
+
     // 時間ボーナスを表示
-    ctx.fillStyle = "#ff8a3d";
     ctx.font = "bold 24px sans-serif";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText(`残り時間ボーナス ${this.lastTimeBonus} 点`, width / 2, height * 0.48);
+    ctx.fillStyle = "#ffb385";
     ctx.fillText(`残り時間ボーナス ${this.lastTimeBonus} 点`, width / 2, height * 0.48);
-    
+
     // 合計得点を下部に大きく表示
     const totalPoints = this.lastBaseScore + this.lastTimeBonus;
-    ctx.fillStyle = "#e0552b";
     ctx.font = "bold 42px sans-serif";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText(`${totalPoints} 点`, width / 2, height * 0.74);
+    ctx.fillStyle = "#ffcf5c";
     ctx.fillText(`${totalPoints} 点`, width / 2, height * 0.74);
     ctx.restore();
   }
@@ -404,9 +413,9 @@ export class CookingPhase {
       ctx.save();
       ctx.textAlign = "center";
       ctx.font = "bold 46px sans-serif";
-      ctx.fillStyle = remaining < 1 ? "#e53935" : "#fff";
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = "#5a2d0c";
+      ctx.fillStyle = remaining < 1 ? "#ff5252" : "#fff";
+      ctx.lineWidth = 7;
+      ctx.strokeStyle = "#000";
       ctx.strokeText(remaining.toFixed(1), width / 2, height * 0.2);
       ctx.fillText(remaining.toFixed(1), width / 2, height * 0.2);
       ctx.restore();

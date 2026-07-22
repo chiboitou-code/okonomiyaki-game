@@ -18,7 +18,8 @@ const RESULT_PAUSE = 0.9; // 秒。各メーターのスコアを表示してお
 const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
 const SPATULA_IMG = loadImage("/images/ui/spatula.png"); // シンプルモードと共通のへら画像
 const BODY_RAW_IMG = loadImage("/images/okonomiyaki/body_00_raw.png");
-const BODY_FINAL_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
+const BODY_MID_IMG = loadImage("/images/okonomiyaki/body_03_backside.png"); // 1ターン目終了後（裏返した直後）
+const BODY_FINAL_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png"); // 2ターン目終了後（完成）
 
 const STAGE = {
   EXPLAIN: "explain",
@@ -260,7 +261,7 @@ export class AdultCookingPhase {
     }
 
     // ---- 本体 ----
-    const bodyImg = this.cycleIndex >= 1 ? BODY_FINAL_IMG : BODY_RAW_IMG;
+    const bodyImg = this.cycleIndex >= 2 ? BODY_FINAL_IMG : this.cycleIndex >= 1 ? BODY_MID_IMG : BODY_RAW_IMG;
     let bodyH = bodyW;
     if (isReady(bodyImg)) {
       bodyH = bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth);
@@ -404,8 +405,8 @@ export class AdultCookingPhase {
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 30px sans-serif";
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = "#5a2d0c";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#000";
     ctx.strokeText("真ん中をねらえ！", width / 2, height * 0.2);
     ctx.fillStyle = "#ffcf5c";
     ctx.fillText("真ん中をねらえ！", width / 2, height * 0.2);
@@ -417,9 +418,9 @@ export class AdultCookingPhase {
       ctx.save();
       ctx.textAlign = "center";
       ctx.font = "bold 46px sans-serif";
-      ctx.fillStyle = remaining < 1 ? "#e53935" : "#fff";
-      ctx.lineWidth = 5;
-      ctx.strokeStyle = "#5a2d0c";
+      ctx.fillStyle = remaining < 1 ? "#ff5252" : "#fff";
+      ctx.lineWidth = 7;
+      ctx.strokeStyle = "#000";
       ctx.strokeText(remaining.toFixed(1), width / 2, height * 0.34);
       ctx.fillText(remaining.toFixed(1), width / 2, height * 0.34);
       ctx.restore();
@@ -507,8 +508,8 @@ export class AdultCookingPhase {
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 30px sans-serif";
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = "#5a2d0c";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#000";
     ctx.strokeText("パワーをためてひっくり返せ！", width / 2, height * 0.2);
     ctx.fillStyle = "#ffcf5c";
     ctx.fillText("パワーをためてひっくり返せ！", width / 2, height * 0.2);
@@ -519,9 +520,9 @@ export class AdultCookingPhase {
     ctx.save();
     ctx.textAlign = "center";
     ctx.font = "bold 46px sans-serif";
-    ctx.fillStyle = remaining < 1 ? "#e53935" : "#fff";
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = "#5a2d0c";
+    ctx.fillStyle = remaining < 1 ? "#ff5252" : "#fff";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#000";
     ctx.strokeText(remaining.toFixed(1), width / 2, height * 0.34);
     ctx.fillText(remaining.toFixed(1), width / 2, height * 0.34);
     ctx.restore();
@@ -531,8 +532,8 @@ export class AdultCookingPhase {
     ctx.scale(this.powerPulse.scale, this.powerPulse.scale);
     ctx.textAlign = "center";
     ctx.font = "bold 44px sans-serif";
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = "#5a2d0c";
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#000";
     ctx.strokeText("連打して！！", 0, 0);
     ctx.fillStyle = "#ff8a3d";
     ctx.fillText("連打して！！", 0, 0);
@@ -560,9 +561,20 @@ export class AdultCookingPhase {
   _renderScorePopup(ctx, width, height, label, score) {
     ctx.save();
     ctx.textAlign = "center";
-    ctx.fillStyle = "#e0552b";
+    ctx.font = "bold 22px sans-serif";
+    const labelW = ctx.measureText(label).width;
+    ctx.font = "bold 42px sans-serif";
+    const scoreW = ctx.measureText(`${score} 点`).width;
+    const badgeW = Math.max(labelW, scoreW) + 48;
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.beginPath();
+    ctx.roundRect(width / 2 - badgeW / 2, height * 0.6, badgeW, height * 0.18, 16);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffcf5c";
     ctx.font = "bold 22px sans-serif";
     ctx.fillText(label, width / 2, height * 0.65);
+    ctx.fillStyle = "#fff";
     ctx.font = "bold 42px sans-serif";
     ctx.fillText(`${score} 点`, width / 2, height * 0.74);
     ctx.restore();
