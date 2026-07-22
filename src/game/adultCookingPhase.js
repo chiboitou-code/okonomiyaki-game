@@ -506,16 +506,28 @@ export class AdultCookingPhase {
   _renderPowerMeter(ctx, width, height, elapsedSeconds) {
     ctx.save();
     ctx.textAlign = "center";
-    ctx.font = "bold 22px sans-serif";
+    ctx.font = "bold 30px sans-serif";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#5a2d0c";
+    ctx.strokeText("パワーをためてひっくり返せ！", width / 2, height * 0.2);
+    ctx.fillStyle = "#ffcf5c";
+    ctx.fillText("パワーをためてひっくり返せ！", width / 2, height * 0.2);
+    ctx.restore();
+
+    // 残り時間：ゲージ（テコメーター）フェーズと同じ位置・見た目に統一
+    const remaining = Math.max(POWER_TIME_LIMIT - (elapsedSeconds - this.powerStartedAt), 0);
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = "bold 46px sans-serif";
+    ctx.fillStyle = remaining < 1 ? "#e53935" : "#fff";
     ctx.lineWidth = 5;
     ctx.strokeStyle = "#5a2d0c";
-    ctx.strokeText("パワーをためてひっくり返せ！", width / 2, height * 0.5);
-    ctx.fillStyle = "#fff";
-    ctx.fillText("パワーをためてひっくり返せ！", width / 2, height * 0.5);
+    ctx.strokeText(remaining.toFixed(1), width / 2, height * 0.34);
+    ctx.fillText(remaining.toFixed(1), width / 2, height * 0.34);
     ctx.restore();
 
     ctx.save();
-    ctx.translate(width / 2, height * 0.62);
+    ctx.translate(width / 2, height * 0.5);
     ctx.scale(this.powerPulse.scale, this.powerPulse.scale);
     ctx.textAlign = "center";
     ctx.font = "bold 44px sans-serif";
@@ -524,15 +536,6 @@ export class AdultCookingPhase {
     ctx.strokeText("連打して！！", 0, 0);
     ctx.fillStyle = "#ff8a3d";
     ctx.fillText("連打して！！", 0, 0);
-    ctx.restore();
-
-    const remaining = Math.max(POWER_TIME_LIMIT - (elapsedSeconds - this.powerStartedAt), 0);
-
-    ctx.save();
-    ctx.textAlign = "center";
-    ctx.font = "bold 36px sans-serif";
-    ctx.fillStyle = remaining < 1 ? "#e53935" : "#5a2d0c";
-    ctx.fillText(remaining.toFixed(2), width / 2, height * 0.72);
     ctx.restore();
 
     const barY = height * 0.78;

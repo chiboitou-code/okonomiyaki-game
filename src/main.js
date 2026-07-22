@@ -156,8 +156,7 @@ function renderUI() {
       { label: "ひっくり返し単体", action: () => startAdultCooking({ debugSingleCycle: true }) },
       { label: "ソース単体", action: () => startDebugTopping("sauce") },
       { label: "マヨネーズ単体", action: () => startDebugTopping("mayo") },
-      { label: "あおのり単体", action: () => startDebugTopping("aonori") },
-      { label: "かつおぶし（未実装）", action: null },
+      { label: "味付けゲーム単体", action: () => startDebugTopping("seasoning") },
     ];
     debugButtons.forEach(({ label, action }) => {
       const btn = document.createElement("button");
