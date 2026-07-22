@@ -2,7 +2,7 @@ import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
-import { isShareSupported, shareScore } from "./share.js";
+import { isShareSupported, shareScreenshot } from "./share.js";
 import gsap from "gsap";
 
 export const TOPPING_TYPES = {
@@ -15,6 +15,7 @@ export const TOPPING_TYPES = {
 // public/images/ にファイルを置くと自動的にこちらが使われる
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
+const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
 
 // 「かんせい」の全面イラスト：complete_01.png〜03.png を用意すればランダムで表示される。
 const COMPLETE_IMAGES = ["01", "02", "03"].map((n) => loadImage(`/images/ui/complete_${n}.png`));
@@ -65,7 +66,7 @@ const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
 const TOPPING_TAP_SCORE = 100; // トッピング1回ごとの得点（特にゲーム性は無いので固定得点）
 const PRAISE_DISPLAY_DURATION = 1.0;
 const SECRET_MODE_SCORE_THRESHOLD = 800; // このスコア以上でクリア画面に「シークレットモード」への入口が出る
-const SHARE_BUTTON_RADIUS = 26; // クリア画面右上の「シェア」ボタンの半径（タップ判定にも使う）
+const SECRET_MODE_SCORE_UNLOCK_ENABLED = false; // 一旦非表示。のちほど再実装する可能性あり（今はタイトルの隠しコマンドのみで解放）
 
 const PRAISE_MESSAGES = [
   "じょうず！",
@@ -105,6 +106,8 @@ export class ToppingPhase {
     this.sparkles = []; // { angle, speed, age, color, size }
     this.confetti = []; // { x, y, vx, vy, rotation, rotSpeed, color, size }
     this._lastConfettiSpawn = 0;
+    this.steamParticles = []; // 湯気（ひっくり返しゲームと同じ演出）
+    this._lastSteamSpawn = 0;
   }
 
   update(deltaSeconds, elapsedSeconds) {
@@ -118,6 +121,8 @@ export class ToppingPhase {
       this._updateConfetti(deltaSeconds, elapsedSeconds);
       return;
     }
+
+    this._updateSteam(deltaSeconds, elapsedSeconds);
 
     // 「パーフェクト！」表示中 → 一定時間経ったらクリア画面に切り替える
     if (this.showingPerfect) {
@@ -165,20 +170,39 @@ export class ToppingPhase {
     this.confetti = this.confetti.filter((c) => c.y < 1.1);
   }
 
+  _updateSteam(deltaSeconds, elapsedSeconds) {
+    if (elapsedSeconds - this._lastSteamSpawn > 0.25) {
+      this._lastSteamSpawn = elapsedSeconds;
+      const spawnCount = 2 + Math.floor(Math.random() * 2);
+      for (let i = 0; i < spawnCount; i++) {
+        this.steamParticles.push({
+          offsetX: (Math.random() - 0.5) * 0.7,
+          y: 0,
+          alpha: 0.9,
+          scale: 0.8 + Math.random() * 0.6,
+        });
+      }
+    }
+    for (const p of this.steamParticles) {
+      p.y += deltaSeconds * 55;
+      p.alpha -= deltaSeconds * 0.4;
+    }
+    this.steamParticles = this.steamParticles.filter((p) => p.alpha > 0);
+  }
+
   handleTap(elapsedSeconds, x, y, width, height) {
     if (this.allDone) {
-      // 右上の「シェア」ボタン
+      // 右上の「シェア」ボタン（ラベル部分も含めて少し広めに判定）
       if (isShareSupported() && x !== undefined && width !== undefined) {
-        const shareX = width - 36;
-        const shareY = 36;
-        const dist = Math.hypot(x - shareX, y - shareY);
-        if (dist <= SHARE_BUTTON_RADIUS) {
-          shareScore(this.totalScore, "ゲーム");
+        const shareX = width - 40;
+        const shareY = 40;
+        if (x >= shareX - 34 && x <= shareX + 34 && y >= shareY - 30 && y <= shareY + 50) {
+          shareScreenshot(this._canvasEl, "okonomiyaki.png");
           return;
         }
       }
 
-      const secretAvailable = this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
+      const secretAvailable = SECRET_MODE_SCORE_UNLOCK_ENABLED && this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
       if (secretAvailable && height !== undefined && y >= height * 0.95) {
         // 「シークレットモード（むずかしい）」をタップ
         playSfx(SOUNDS.flip);
@@ -313,18 +337,60 @@ export class ToppingPhase {
   // クリア画面右上の「シェア」ボタン（Web Share API非対応のブラウザでは表示しない）
   _renderShareButton(ctx, width) {
     if (!isShareSupported()) return;
-    const x = width - 36;
-    const y = 36;
+    const cx = width - 40;
+    const cy = 40;
+    const boxSize = 52;
+
     ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    // 角丸四角の背景
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.strokeStyle = "rgba(0,0,0,0.15)";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(x, y, SHARE_BUTTON_RADIUS, 0, Math.PI * 2);
+    ctx.roundRect(cx - boxSize / 2, cy - boxSize / 2, boxSize, boxSize, 14);
     ctx.fill();
-    ctx.font = "22px sans-serif";
+    ctx.stroke();
+
+    // 上向き矢印＋トレイ（共有アイコン）
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    const arrowTopY = cy - 12;
+    const arrowBottomY = cy + 4;
+    const arrowHalfW = 7;
+
+    ctx.beginPath();
+    ctx.moveTo(cx - arrowHalfW, arrowTopY + 8);
+    ctx.lineTo(cx, arrowTopY);
+    ctx.lineTo(cx + arrowHalfW, arrowTopY + 8);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(cx, arrowTopY);
+    ctx.lineTo(cx, arrowBottomY);
+    ctx.stroke();
+
+    const trayY = cy + 13;
+    const trayHalfW = 11;
+    ctx.beginPath();
+    ctx.moveTo(cx - trayHalfW, trayY - 7);
+    ctx.lineTo(cx - trayHalfW, trayY);
+    ctx.lineTo(cx + trayHalfW, trayY);
+    ctx.lineTo(cx + trayHalfW, trayY - 7);
+    ctx.stroke();
+    ctx.restore();
+
+    // ボタン下のラベル
+    ctx.save();
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+    ctx.font = "bold 12px sans-serif";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText("画像を共有", cx, cy + boxSize / 2 + 16);
     ctx.fillStyle = "#fff";
-    ctx.fillText("📤", x, y + 1);
+    ctx.fillText("画像を共有", cx, cy + boxSize / 2 + 16);
     ctx.restore();
   }
 
@@ -342,6 +408,9 @@ export class ToppingPhase {
   }
 
   render(ctx, width, height, elapsedSeconds) {
+    this._canvasEl = ctx.canvas;
+
+
     // ---- 完成後：全面に「かんせい」イラスト＋紙吹雪＋「パーフェクト！」＋下部に「もういちど」 ----
     if (this.allDone) {
       if (this.selectedCompleteImg && isReady(this.selectedCompleteImg)) {
@@ -381,7 +450,7 @@ export class ToppingPhase {
       ctx.fillText(scoreText, width / 2, height * 0.84);
       
       // 「もういちど」（800点以上ならシークレットモードへの入口も下に表示）
-      const secretAvailable = this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
+      const secretAvailable = SECRET_MODE_SCORE_UNLOCK_ENABLED && this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
       ctx.fillStyle = "#fff";
       ctx.font = "bold 24px sans-serif";
       ctx.fillText("もういちど", width / 2, height * (secretAvailable ? 0.89 : 0.93));
@@ -437,6 +506,33 @@ export class ToppingPhase {
         ctx.fillStyle = FALLBACK_COLOR[type];
         ctx.beginPath();
         ctx.ellipse(bodyCenterX, bodyCenterY, w * 0.4, bodyH * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // ---- 湯気（ひっくり返しゲームと同じ演出） ----
+    const bodyRadiusX = w / 2;
+    const bodyRadiusY = bodyH / 2;
+    for (const p of this.steamParticles) {
+      const sx = bodyCenterX + p.offsetX * bodyRadiusX * 2;
+      const sy = bodyCenterY - bodyRadiusY * 0.6 - p.y;
+      const steamAlpha = Math.max(p.alpha, 0);
+
+      if (isReady(STEAM_IMG)) {
+        ctx.save();
+        ctx.globalAlpha = steamAlpha;
+        const size = 40 * p.scale;
+        ctx.drawImage(STEAM_IMG, sx - size / 2, sy - size / 2, size, size);
+        ctx.restore();
+      } else {
+        const radius = 24 * p.scale;
+        const gradient = ctx.createRadialGradient(sx, sy, 0, sx, sy, radius);
+        gradient.addColorStop(0, `rgba(255,255,255,${0.55 * steamAlpha})`);
+        gradient.addColorStop(0.6, `rgba(255,255,255,${0.25 * steamAlpha})`);
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(sx, sy, radius, 0, Math.PI * 2);
         ctx.fill();
       }
     }

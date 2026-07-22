@@ -2,7 +2,7 @@ import { loadImage, isReady, pickReadyRandom } from "./assets.js";
 import { BODY_WIDTH_RATIO, BODY_CENTER_Y_RATIO } from "./layout.js";
 import { playSfx } from "./audio.js";
 import { SOUNDS } from "./sounds.js";
-import { isShareSupported, shareScore } from "./share.js";
+import { isShareSupported, shareScreenshot } from "./share.js";
 import gsap from "gsap";
 
 // ---- 調整用の定数 ----
@@ -57,7 +57,6 @@ const KATSUOBUSHI_COLORS = [
 // 紙吹雪（クリア画面用）
 const CONFETTI_COLORS = ["#ff8a3d", "#ffd166", "#8bd17c", "#5eb0ef", "#ff6b9d"];
 const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
-const SHARE_BUTTON_RADIUS = 26; // クリア画面右上の「シェア」ボタンの半径（タップ判定にも使う）
 
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
@@ -326,13 +325,12 @@ export class AdultToppingPhase {
       return;
     }
     if (this.stage === STAGE.CLEAR) {
-      // 右上の「シェア」ボタン
+      // 右上の「シェア」ボタン（ラベル部分も含めて少し広めに判定）
       if (isShareSupported() && x !== undefined && width !== undefined) {
-        const shareX = width - 36;
-        const shareY = 36;
-        const dist = Math.hypot(x - shareX, y - shareY);
-        if (dist <= SHARE_BUTTON_RADIUS) {
-          shareScore(this.totalScore, "シークレットモード");
+        const shareX = width - 40;
+        const shareY = 40;
+        if (x >= shareX - 34 && x <= shareX + 34 && y >= shareY - 30 && y <= shareY + 50) {
+          shareScreenshot(this._canvasEl, "okonomiyaki.png");
           return;
         }
       }
@@ -570,6 +568,8 @@ export class AdultToppingPhase {
   }
 
   render(ctx, width, height, elapsedSeconds) {
+    this._canvasEl = ctx.canvas;
+
     // ---- クリア画面：全面「かんせい」イラスト＋紙吹雪＋総合スコア ----
     if (this.stage === STAGE.CLEAR) {
       this._renderClearScreen(ctx, width, height);
@@ -1209,18 +1209,60 @@ export class AdultToppingPhase {
   // クリア画面右上の「シェア」ボタン（Web Share API非対応のブラウザでは表示しない）
   _renderShareButton(ctx, width) {
     if (!isShareSupported()) return;
-    const x = width - 36;
-    const y = 36;
+    const cx = width - 40;
+    const cy = 40;
+    const boxSize = 52;
+
     ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    // 角丸四角の背景
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    ctx.strokeStyle = "rgba(0,0,0,0.15)";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(x, y, SHARE_BUTTON_RADIUS, 0, Math.PI * 2);
+    ctx.roundRect(cx - boxSize / 2, cy - boxSize / 2, boxSize, boxSize, 14);
     ctx.fill();
-    ctx.font = "22px sans-serif";
+    ctx.stroke();
+
+    // 上向き矢印＋トレイ（共有アイコン）
+    ctx.strokeStyle = "#333";
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+
+    const arrowTopY = cy - 12;
+    const arrowBottomY = cy + 4;
+    const arrowHalfW = 7;
+
+    ctx.beginPath();
+    ctx.moveTo(cx - arrowHalfW, arrowTopY + 8);
+    ctx.lineTo(cx, arrowTopY);
+    ctx.lineTo(cx + arrowHalfW, arrowTopY + 8);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(cx, arrowTopY);
+    ctx.lineTo(cx, arrowBottomY);
+    ctx.stroke();
+
+    const trayY = cy + 13;
+    const trayHalfW = 11;
+    ctx.beginPath();
+    ctx.moveTo(cx - trayHalfW, trayY - 7);
+    ctx.lineTo(cx - trayHalfW, trayY);
+    ctx.lineTo(cx + trayHalfW, trayY);
+    ctx.lineTo(cx + trayHalfW, trayY - 7);
+    ctx.stroke();
+    ctx.restore();
+
+    // ボタン下のラベル
+    ctx.save();
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
+    ctx.font = "bold 12px sans-serif";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText("画像を共有", cx, cy + boxSize / 2 + 16);
     ctx.fillStyle = "#fff";
-    ctx.fillText("📤", x, y + 1);
+    ctx.fillText("画像を共有", cx, cy + boxSize / 2 + 16);
     ctx.restore();
   }
 

@@ -11,13 +11,8 @@ unlockAudioOnFirstTap();
 let bgmStarted = false;
 
 // ---------- シークレットモード（旧スコアモード）解放：タイトルロゴを3回タップで出現 ----------
-const SECRET_MODE_KEY = "okonomiyaki_secret_mode_unlocked";
+// 毎回、隠しコマンド（ロゴ3回タップ）が必須。あえて保存はしない仕様。
 let secretModeUnlocked = false;
-try {
-  secretModeUnlocked = localStorage.getItem(SECRET_MODE_KEY) === "1";
-} catch (e) {
-  // プライベートモード等でlocalStorageが使えない場合は毎回タップで解放する
-}
 let logoTapCount = 0;
 let logoTapResetTimer = null;
 
@@ -130,11 +125,6 @@ function renderUI() {
         }
         if (!secretModeUnlocked) {
           secretModeUnlocked = true;
-          try {
-            localStorage.setItem(SECRET_MODE_KEY, "1");
-          } catch (e) {
-            // 保存できなくても今回のセッション中は解放されたままにする
-          }
           playSfx(SOUNDS.flip);
           renderUI();
         }
