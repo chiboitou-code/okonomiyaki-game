@@ -19,8 +19,16 @@ const STEAM_IMG = loadImage("/images/ui/steam_puff.png");
 
 // 「かんせい」の全面イラスト：complete_01.png〜03.png を用意すればランダムで表示される。
 const COMPLETE_IMAGES = ["01", "02", "03"].map((n) => loadImage(`/images/ui/complete_${n}.png`));
-const CHARACTER_A_IMG = loadImage("/images/ui/character_topping_a.png"); // 右上の応援キャラ
-const CHARACTER_B_IMG = loadImage("/images/ui/character_topping_b.png"); // 左下の応援キャラ
+const CHARACTER_A_IMG = loadImage("/images/ui/character_topping_a.png"); // 右上の応援キャラ（現在は非表示。演出変更予定）
+const CHARACTER_B_IMG = loadImage("/images/ui/character_topping_b.png"); // 左下の応援キャラ（現在は非表示。演出変更予定）
+
+// ドラッグ＆ドロップ方式のトッピングカード画像
+const CARD_IMAGES = {
+  [TOPPING_TYPES.SAUCE]: loadImage("/images/cards/card_sauce.png"),
+  [TOPPING_TYPES.MAYO]: loadImage("/images/cards/card_mayo.png"),
+  [TOPPING_TYPES.AONORI]: loadImage("/images/cards/card_aonori.png"),
+  [TOPPING_TYPES.KATSUOBUSHI]: loadImage("/images/cards/card_katsuobushi.png"),
+};
 
 const TOPPING_OVERLAY_IMAGES = {
   [TOPPING_TYPES.SAUCE]: loadImage("/images/toppings/topping_sauce.png"),
@@ -57,9 +65,11 @@ const STEPS = [
 
 const STEP_PAUSE = 0.9; // 秒。トッピングが乗った後、次のステップ（または完成画面）に進むまでの間
 const CHARACTER_POP_GROW_DURATION = 0.2; // 秒。応援キャラがポンと出てくるまでの時間（この後は消えずそのまま表示）
-const SPARKLE_LIFETIME = 0.5; // 秒。キラキラ粒子の寿命
-const SPARKLE_COUNT = 14; // 1回のトッピングで飛び散る粒子の数
-const FLASH_DURATION = 0.25; // 秒。トッピングが乗った瞬間の白フラッシュの長さ
+const SPARKLE_LIFETIME = 0.6; // 秒。キラキラ粒子の寿命（少し長く）
+const SPARKLE_COUNT = 26; // 1回のトッピングで飛び散る粒子の数（強化）
+const FLASH_DURATION = 0.32; // 秒。トッピングが乗った瞬間の白フラッシュの長さ（強化）
+const STAR_BURST_COUNT = 10; // 星がはじけ飛ぶ演出の数
+const STAR_BURST_LIFETIME = 0.7; // 秒。星がはじけ飛ぶ演出の寿命
 const PERFECT_POP_DURATION = 0.4; // 秒。「パーフェクト！」がポンと出てくるまでの時間
 const PERFECT_HOLD_DURATION = 1.0; // 秒。「パーフェクト！」を表示しておく時間（この後クリア画面に切り替わる）
 const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
@@ -67,6 +77,12 @@ const TOPPING_TAP_SCORE = 100; // トッピング1回ごとの得点（特にゲ
 const PRAISE_DISPLAY_DURATION = 1.0;
 const SECRET_MODE_SCORE_THRESHOLD = 800; // このスコア以上でクリア画面に「シークレットモード」への入口が出る
 const SECRET_MODE_SCORE_UNLOCK_ENABLED = false; // 一旦非表示。のちほど再実装する可能性あり（今はタイトルの隠しコマンドのみで解放）
+const CHARACTERS_ENABLED = false; // 応援キャラ2体：ドラッグ&ドロップ方式への変更に伴い一旦非表示（演出変更予定）
+const PRAISE_ENABLED = false; // 「じょうず！」等のメッセージ：同上の理由で一旦非表示
+const CARD_SIZE_RATIO = 0.26; // 画面の短い方の辺に対するカードの基準幅の比率（高さは1.3倍のスロットに収める）
+const CARD_Y_RATIO = 0.84; // カードの中心Y位置（画面の高さに対する比率）
+const CARD_SLOT_HEIGHT_MULTIPLIER = 1.3; // カードスロットの縦横比（幅に対する高さの倍率。縦長画像もそのまま収まるように）
+const DROP_ZONE_RADIUS_RATIO = 0.55; // 本体幅に対する「乗せられる」判定半径の比率
 
 const PRAISE_MESSAGES = [
   "じょうず！",
@@ -104,10 +120,21 @@ export class ToppingPhase {
     this.perfectAt = null; // 「パーフェクト！」演出の開始時刻
     this.selectedCompleteImg = null; // 「かんせい」画面用に選ばれた画像（allDoneになった瞬間に1回だけ選ぶ）
     this.sparkles = []; // { angle, speed, age, color, size }
+    this.starBursts = []; // { angle, speed, age, rotation, rotSpeed, size } 星がはじけ飛ぶ演出
+    this.bodyBounce = { scale: 1 }; // トッピングが乗った瞬間、本体がポンと弾む演出（GSAP）
     this.confetti = []; // { x, y, vx, vy, rotation, rotSpeed, color, size }
     this._lastConfettiSpawn = 0;
     this.steamParticles = []; // 湯気（ひっくり返しゲームと同じ演出）
     this._lastSteamSpawn = 0;
+
+    // ドラッグ＆ドロップ方式のトッピングカード用の状態
+    this.dragging = false;
+    this.dragType = null;
+    this.dragX = 0;
+    this.dragY = 0;
+
+    // ドラッグ中に左右から出てくる応援キャラ2体（震える→ドロップではじけて画面外へ）
+    this.dragCharState = { visible: false, appear: 0, burst: 0 };
   }
 
   update(deltaSeconds, elapsedSeconds) {
@@ -116,6 +143,12 @@ export class ToppingPhase {
       s.age += deltaSeconds;
     }
     this.sparkles = this.sparkles.filter((s) => s.age < SPARKLE_LIFETIME);
+
+    // 星がはじけ飛ぶ演出の経過時間を進める
+    for (const s of this.starBursts) {
+      s.age += deltaSeconds;
+    }
+    this.starBursts = this.starBursts.filter((s) => s.age < STAR_BURST_LIFETIME);
 
     if (this.allDone) {
       this._updateConfetti(deltaSeconds, elapsedSeconds);
@@ -197,6 +230,11 @@ export class ToppingPhase {
         const shareX = width - 40;
         const shareY = 40;
         if (x >= shareX - 34 && x <= shareX + 34 && y >= shareY - 30 && y <= shareY + 50) {
+          // シェアボタン自体がスクショに写り込まないよう、ボタン無しの状態を一度描き直してから撮影する
+          if (this._canvasEl) {
+            const shareCtx = this._canvasEl.getContext("2d");
+            this._renderClearScreenContent(shareCtx, width, height, elapsedSeconds);
+          }
           shareScreenshot(this._canvasEl, "okonomiyaki.png");
           return;
         }
@@ -204,7 +242,7 @@ export class ToppingPhase {
 
       const secretAvailable = SECRET_MODE_SCORE_UNLOCK_ENABLED && this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
       if (secretAvailable && height !== undefined && y >= height * 0.95) {
-        // 「シークレットモード（むずかしい）」をタップ
+        // 「シークレットモード」をタップ
         playSfx(SOUNDS.flip);
         this.onSecretMode();
         return;
@@ -214,24 +252,122 @@ export class ToppingPhase {
       this.onRetry();
       return;
     }
-    if (this.showingPerfect) return; // 「パーフェクト！」表示中はタップ無効
+    // トッピングはドラッグ＆ドロップ方式（handlePointerDown/Move/Up）に変更したため、
+    // ゲームプレイ中の単純なタップでは何も起きない。
+  }
+
+  // カード（今のステップのもの）の位置・サイズを返す
+  _getCardRect(width, height) {
+    const size = Math.min(width, height) * CARD_SIZE_RATIO;
+    const cx = width / 2;
+    const cy = height * CARD_Y_RATIO;
+    const slotHeight = size * CARD_SLOT_HEIGHT_MULTIPLIER;
+    return { cx, cy, size, slotHeight };
+  }
+
+  handlePointerDown(x, y, elapsedSeconds, width, height) {
+    if (this.allDone || this.showingPerfect) return;
     if (this.justAppliedAt !== null) return;
     if (this.stepIndex >= STEPS.length) return;
-    const step = STEPS[this.stepIndex];
+    if (this.dragging) return;
+
+    const { cx, cy, size, slotHeight } = this._getCardRect(width, height);
+    const halfW = size / 2;
+    const halfH = slotHeight / 2;
+    if (x >= cx - halfW && x <= cx + halfW && y >= cy - halfH && y <= cy + halfH) {
+      this.dragging = true;
+      this.dragType = STEPS[this.stepIndex].type;
+      this.dragX = x;
+      this.dragY = y;
+      playSfx(SOUNDS.toppingTap);
+
+      // 左右からキャラが登場（ぷるぷる震える）演出を開始
+      this.dragCharState.visible = true;
+      gsap.killTweensOf(this.dragCharState);
+      this.dragCharState.appear = 0;
+      this.dragCharState.burst = 0;
+      gsap.to(this.dragCharState, { appear: 1, duration: 0.25, ease: "back.out(2)" });
+    }
+  }
+
+  handlePointerMove(x, y, elapsedSeconds, width, height) {
+    if (!this.dragging) return;
+    this.dragX = x;
+    this.dragY = y;
+  }
+
+  handlePointerUp(x, y, elapsedSeconds, width, height) {
+    if (!this.dragging) return;
+    const type = this.dragType;
+    this.dragging = false;
+
+    // キャラがはじけるように画面外へ
+    gsap.killTweensOf(this.dragCharState);
+    gsap.to(this.dragCharState, {
+      burst: 1,
+      duration: 0.5,
+      ease: "power2.in",
+      onComplete: () => {
+        this.dragCharState.visible = false;
+      },
+    });
+    this.dragType = null;
+
+    const bodyCenterX = width / 2;
+    const bodyCenterY = height * BODY_CENTER_Y_RATIO;
+    const w = width * BODY_WIDTH_RATIO;
+    const dropRadius = w * DROP_ZONE_RADIUS_RATIO;
+    const dist = Math.hypot(x - bodyCenterX, y - bodyCenterY);
+
+    if (dist <= dropRadius) {
+      this._applyTopping(type, elapsedSeconds);
+    }
+    // 枠の外で離した場合は何も起きず、カードは元の場所に戻るだけ（ペナルティ無し）
+  }
+
+  // カードが正しく本体に乗った時の処理（見た目・スコア・効果音）
+  _applyTopping(type, elapsedSeconds) {
     playSfx(SOUNDS.toppingTap);
-    this.active[step.type] = true;
+    this.active[type] = true;
     this.justAppliedAt = elapsedSeconds;
     this.flashAt = elapsedSeconds;
-    this._spawnSparkles(step.type);
+    this._spawnSparkles(type);
+    this._spawnStarBurst();
+    this._bounceBody();
 
-    // 特にゲーム性は無いトッピングフェーズ：タップごとに固定得点を加算
+    // 特にゲーム性は無いトッピングフェーズ：乗せるごとに固定得点を加算
     this.totalScore += TOPPING_TAP_SCORE;
 
     this.scoreDisplayAt = elapsedSeconds;
 
-    this._spawnPraise(elapsedSeconds);
+    if (PRAISE_ENABLED) {
+      this._spawnPraise(elapsedSeconds);
+    }
 
     this._bounceScore();
+  }
+
+  // 本体がポンと弾む演出（トッピングが乗った瞬間）
+  _bounceBody() {
+    gsap.killTweensOf(this.bodyBounce);
+    gsap
+      .timeline()
+      .to(this.bodyBounce, { scale: 1.12, duration: 0.1, ease: "back.out(2)" })
+      .to(this.bodyBounce, { scale: 1, duration: 0.45, ease: "elastic.out(1.1, 0.3)" });
+  }
+
+  // 星がキラキラはじけ飛ぶ演出
+  _spawnStarBurst() {
+    for (let i = 0; i < STAR_BURST_COUNT; i++) {
+      this.starBursts.push({
+        angle: Math.random() * Math.PI * 2,
+        speed: 0.8 + Math.random() * 0.7, // 本体半径に対する割合/秒
+        age: 0,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 8,
+        size: 10 + Math.random() * 10,
+      });
+    }
   }
 
   // 点数が入った時に、スコア表示を弾ませる
@@ -394,6 +530,26 @@ export class ToppingPhase {
     ctx.restore();
   }
 
+  // 5点の星形パスを(0,0)中心に描く（fill/strokeは呼び出し側で行う）
+  _drawStarPath(ctx, size) {
+    const spikes = 5;
+    const outerR = size;
+    const innerR = size * 0.45;
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = (Math.PI / spikes) * i - Math.PI / 2;
+      const x = Math.cos(angle) * r;
+      const y = Math.sin(angle) * r;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.closePath();
+  }
+
   _spawnSparkles(type) {
     const color = SPARKLE_COLOR[type] || "#fff";
     for (let i = 0; i < SPARKLE_COUNT; i++) {
@@ -407,63 +563,214 @@ export class ToppingPhase {
     }
   }
 
+  // カード本体（今のステップのカードが置いてある「トレイ」の表示。ドラッグ中は薄い枠だけ）
+  _renderCard(ctx, width, height, type, elapsedSeconds) {
+    const { cx, cy, size, slotHeight } = this._getCardRect(width, height);
+    if (this.dragging) {
+      ctx.save();
+      ctx.globalAlpha = 0.3;
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 3;
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.roundRect(cx - size / 2, cy - slotHeight / 2, size, slotHeight, 16);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
+    // 本体に向かって伸びる、ぴょこぴょこ動く大きな矢印
+    this._renderGrabArrow(ctx, cx, cy - slotHeight / 2, width, height, elapsedSeconds);
+
+    // 「つかむ」ラベル（カードの右側）
+    ctx.save();
+    ctx.textAlign = "left";
+    ctx.font = "bold 16px sans-serif";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText("👆 つかむ", cx + size / 2 + 10, cy);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("👆 つかむ", cx + size / 2 + 10, cy);
+    ctx.restore();
+
+    this._drawCardImage(ctx, type, cx, cy, size, slotHeight, 1);
+  }
+
+  // カードから本体（成功判定エリア）に向かって伸びる矢印
+  _renderGrabArrow(ctx, cx, cardTopY, width, height, elapsedSeconds) {
+    const bob = Math.sin(elapsedSeconds * 3) * 6;
+    const tipY = height * BODY_CENTER_Y_RATIO + height * 0.12 + bob;
+    const tailY = cardTopY - 6 + bob;
+    if (tailY <= tipY + 24) return; // 画面が小さく矢印を描くスペースが無い時は省略
+    const arrowHeadW = 22;
+
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.strokeStyle = "#ffd166";
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    ctx.shadowColor = "rgba(0,0,0,0.4)";
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(cx, tailY);
+    ctx.lineTo(cx, tipY + 26);
+    ctx.stroke();
+
+    ctx.shadowColor = "transparent";
+    ctx.fillStyle = "#ffd166";
+    ctx.beginPath();
+    ctx.moveTo(cx, tipY);
+    ctx.lineTo(cx - arrowHeadW / 2, tipY + 26);
+    ctx.lineTo(cx + arrowHeadW / 2, tipY + 26);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ドラッグ中、指・マウスに追従するカード
+  _renderDraggingCard(ctx, width, height) {
+    const { size, slotHeight } = this._getCardRect(width, height);
+    this._drawCardImage(ctx, this.dragType, this.dragX, this.dragY, size * 1.05, slotHeight * 1.05, 0.92);
+  }
+
+  // カード画像の共通描画：画像の縦横比を保ったまま（潰さず）スロット内に収めて描く。
+  // 画像が無い時だけ、白い角丸カード＋色付き丸でフォールバックする。
+  _drawCardImage(ctx, type, cx, cy, boxW, boxH, alpha) {
+    const img = CARD_IMAGES[type];
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 4;
+
+    if (isReady(img)) {
+      const imgRatio = img.naturalWidth / img.naturalHeight;
+      const boxRatio = boxW / boxH;
+      let drawW;
+      let drawH;
+      if (imgRatio > boxRatio) {
+        drawW = boxW;
+        drawH = boxW / imgRatio;
+      } else {
+        drawH = boxH;
+        drawW = boxH * imgRatio;
+      }
+      ctx.drawImage(img, cx - drawW / 2, cy - drawH / 2, drawW, drawH);
+    } else {
+      const half = Math.min(boxW, boxH * 0.7) / 2;
+      ctx.fillStyle = "rgba(255,255,255,0.95)";
+      ctx.beginPath();
+      ctx.roundRect(cx - half, cy - half, half * 2, half * 2, 16);
+      ctx.fill();
+      ctx.shadowColor = "transparent";
+      ctx.fillStyle = FALLBACK_COLOR[type];
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, half * 0.6, half * 0.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(0,0,0,0.15)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.roundRect(cx - half, cy - half, half * 2, half * 2, 16);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ドラッグ中、左下・右下から出てくる応援キャラ2体（震える→ドロップではじけて画面外へ）
+  _renderDragCharacters(ctx, width, height, elapsedSeconds) {
+    const { appear, burst } = this.dragCharState;
+    if (appear <= 0) return;
+
+    const characters = [
+      { img: CHARACTER_A_IMG, baseX: width * 0.14, dir: -1, seed: 0 },
+      { img: CHARACTER_B_IMG, baseX: width * 0.86, dir: 1, seed: 10 },
+    ];
+    const baseY = height * 0.86;
+
+    for (const { img, baseX, dir, seed } of characters) {
+      if (!isReady(img)) continue;
+
+      // ぷるぷる震える（はじけ始めたら震えは止める）
+      const tremble = burst > 0 ? 0 : Math.sin(elapsedSeconds * 45 + seed) * 2.5;
+      const trembleY = burst > 0 ? 0 : Math.cos(elapsedSeconds * 38 + seed) * 2;
+
+      const burstX = dir * burst * width * 0.4;
+      const burstY = -burst * height * 0.35;
+      const burstRotation = dir * burst * Math.PI * 1.5;
+      const burstAlpha = 1 - burst;
+
+      const charH = width * 0.286 * appear; // 通常の1.3倍サイズ
+      const charW = charH * (img.naturalWidth / img.naturalHeight);
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(appear * burstAlpha, 0);
+      ctx.translate(baseX + tremble + burstX, baseY + trembleY + burstY);
+      ctx.rotate(burstRotation);
+      ctx.drawImage(img, -charW / 2, -charH / 2, charW, charH);
+      ctx.restore();
+    }
+  }
+
+  // 「かんせい」画面の中身（シェアボタンを除く）。シェア撮影時にボタン無しで撮り直すために分離してある。
+  _renderClearScreenContent(ctx, width, height) {
+    if (this.selectedCompleteImg && isReady(this.selectedCompleteImg)) {
+      const img = this.selectedCompleteImg;
+      const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
+      const w = img.naturalWidth * scale;
+      const h = img.naturalHeight * scale;
+      ctx.drawImage(img, width / 2 - w / 2, height / 2 - h / 2, w, h);
+    } else {
+      ctx.fillStyle = "#ffdca3";
+      ctx.fillRect(0, 0, width, height);
+    }
+
+    // 紙吹雪（上から降り続ける）
+    for (const c of this.confetti) {
+      ctx.save();
+      ctx.translate(c.x * width, c.y * height);
+      ctx.rotate(c.rotation);
+      ctx.fillStyle = c.color;
+      ctx.fillRect(-c.size / 2, -c.size / 3, c.size, c.size * 0.6);
+      ctx.restore();
+    }
+
+    // 下部の帯＋スコア＋「もういちど」の文字
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(0, height * 0.78, width, height * 0.22);
+
+    // 大きなスコア表示
+    const scoreText = `${this.totalScore}点！！`;
+    ctx.font = "bold 48px sans-serif";
+    ctx.textAlign = "center";
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = "#5a2d0c";
+    ctx.strokeText(scoreText, width / 2, height * 0.84);
+    ctx.fillStyle = "#ffcf5c";
+    ctx.fillText(scoreText, width / 2, height * 0.84);
+
+    // 「もういちど」（800点以上ならシークレットモードへの入口も下に表示）
+    const secretAvailable = SECRET_MODE_SCORE_UNLOCK_ENABLED && this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 24px sans-serif";
+    ctx.fillText("もういちど", width / 2, height * (secretAvailable ? 0.89 : 0.93));
+
+    if (secretAvailable) {
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "bold 16px sans-serif";
+      ctx.fillText("シークレットモード", width / 2, height * 0.965);
+    }
+    ctx.restore();
+  }
+
   render(ctx, width, height, elapsedSeconds) {
     this._canvasEl = ctx.canvas;
 
 
     // ---- 完成後：全面に「かんせい」イラスト＋紙吹雪＋「パーフェクト！」＋下部に「もういちど」 ----
     if (this.allDone) {
-      if (this.selectedCompleteImg && isReady(this.selectedCompleteImg)) {
-        const img = this.selectedCompleteImg;
-        const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
-        const w = img.naturalWidth * scale;
-        const h = img.naturalHeight * scale;
-        ctx.drawImage(img, width / 2 - w / 2, height / 2 - h / 2, w, h);
-      } else {
-        ctx.fillStyle = "#ffdca3";
-        ctx.fillRect(0, 0, width, height);
-      }
-
-      // 紙吹雪（上から降り続ける）
-      for (const c of this.confetti) {
-        ctx.save();
-        ctx.translate(c.x * width, c.y * height);
-        ctx.rotate(c.rotation);
-        ctx.fillStyle = c.color;
-        ctx.fillRect(-c.size / 2, -c.size / 3, c.size, c.size * 0.6);
-        ctx.restore();
-      }
-
-      // 下部の帯＋スコア＋「もういちど」の文字
-      ctx.save();
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
-      ctx.fillRect(0, height * 0.78, width, height * 0.22);
-      
-      // 大きなスコア表示
-      const scoreText = `${this.totalScore}点！！`;
-      ctx.font = "bold 48px sans-serif";
-      ctx.textAlign = "center";
-      ctx.lineWidth = 6;
-      ctx.strokeStyle = "#5a2d0c";
-      ctx.strokeText(scoreText, width / 2, height * 0.84);
-      ctx.fillStyle = "#ffcf5c";
-      ctx.fillText(scoreText, width / 2, height * 0.84);
-      
-      // 「もういちど」（800点以上ならシークレットモードへの入口も下に表示）
-      const secretAvailable = SECRET_MODE_SCORE_UNLOCK_ENABLED && this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 24px sans-serif";
-      ctx.fillText("もういちど", width / 2, height * (secretAvailable ? 0.89 : 0.93));
-
-      if (secretAvailable) {
-        ctx.fillStyle = "#ffd166";
-        ctx.font = "bold 16px sans-serif";
-        ctx.fillText("シークレットモード（むずかしい）", width / 2, height * 0.965);
-      }
-      ctx.restore();
-
+      this._renderClearScreenContent(ctx, width, height, elapsedSeconds);
       this._renderShareButton(ctx, width);
-
       this._renderScoreBadge(ctx, width, height);
       return;
     }
@@ -472,6 +779,12 @@ export class ToppingPhase {
     const bodyCenterX = width / 2;
     const bodyCenterY = height * BODY_CENTER_Y_RATIO;
     const w = width * BODY_WIDTH_RATIO;
+
+    // 本体まわり一式（お皿・本体・トッピング）を、トッピングが乗った瞬間ポンと弾ませる
+    ctx.save();
+    ctx.translate(bodyCenterX, bodyCenterY);
+    ctx.scale(this.bodyBounce.scale, this.bodyBounce.scale);
+    ctx.translate(-bodyCenterX, -bodyCenterY);
 
     // お皿
     if (isReady(PLATE_IMG)) {
@@ -509,6 +822,7 @@ export class ToppingPhase {
         ctx.fill();
       }
     }
+    ctx.restore();
 
     // ---- 湯気（ひっくり返しゲームと同じ演出） ----
     const bodyRadiusX = w / 2;
@@ -537,20 +851,33 @@ export class ToppingPhase {
       }
     }
 
-    // ---- 白フラッシュ（トッピングが乗った瞬間、本体あたりがパッと光る） ----
+    // ---- 白フラッシュ（トッピングが乗った瞬間、本体あたりがパッと光る）＋衝撃波リング ----
     if (this.flashAt !== null) {
       const flashT = elapsedSeconds - this.flashAt;
       if (flashT < FLASH_DURATION) {
         const flashAlpha = 1 - flashT / FLASH_DURATION;
-        const flashRadius = w * 0.6;
+        const flashRadius = w * 0.75;
         const gradient = ctx.createRadialGradient(bodyCenterX, bodyCenterY, 0, bodyCenterX, bodyCenterY, flashRadius);
-        gradient.addColorStop(0, `rgba(255,255,255,${0.85 * flashAlpha})`);
+        gradient.addColorStop(0, `rgba(255,255,255,${flashAlpha})`);
+        gradient.addColorStop(0.6, `rgba(255,240,180,${0.6 * flashAlpha})`);
         gradient.addColorStop(1, "rgba(255,255,255,0)");
         ctx.save();
         ctx.fillStyle = gradient;
         ctx.beginPath();
         ctx.arc(bodyCenterX, bodyCenterY, flashRadius, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+
+        // 衝撃波リング：外側に広がりながら消える輪
+        const ringProgress = flashT / FLASH_DURATION;
+        const ringRadius = w * (0.35 + ringProgress * 0.5);
+        ctx.save();
+        ctx.globalAlpha = (1 - ringProgress) * 0.8;
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 6 * (1 - ringProgress * 0.6);
+        ctx.beginPath();
+        ctx.arc(bodyCenterX, bodyCenterY, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
         ctx.restore();
       } else {
         this.flashAt = null;
@@ -578,8 +905,33 @@ export class ToppingPhase {
       ctx.restore();
     }
 
+    // ---- 星がキラキラはじけ飛ぶ演出（トッピングが乗った瞬間、外側へ回転しながら飛ぶ） ----
+    const starBurstRadius = w * 0.75;
+    for (const s of this.starBursts) {
+      const progress = s.age / STAR_BURST_LIFETIME;
+      const eased = 1 - (1 - progress) * (1 - progress); // ease-out
+      const distance = s.speed * starBurstRadius * eased;
+      const alpha = 1 - progress;
+      const px = bodyCenterX + Math.cos(s.angle) * distance;
+      const py = bodyCenterY + Math.sin(s.angle) * distance;
+      const rotation = s.rotation + s.rotSpeed * s.age;
+      const scale = 1 - progress * 0.5;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.translate(px, py);
+      ctx.rotate(rotation);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "#ffd166";
+      ctx.shadowColor = "#ffd166";
+      ctx.shadowBlur = 8;
+      this._drawStarPath(ctx, s.size);
+      ctx.fill();
+      ctx.restore();
+    }
+
     // ---- 応援キャラ2体：トッピングを乗せた瞬間だけ、右上・左下にポンと同時ポップアップ ----
-    if (this.justAppliedAt !== null) {
+    if (CHARACTERS_ENABLED && this.justAppliedAt !== null) {
       const growProgress = Math.min((elapsedSeconds - this.justAppliedAt) / CHARACTER_POP_GROW_DURATION, 1);
       const growScale = Math.sin(growProgress * (Math.PI / 2)); // 0→1（出てきたら止まる、消えない）
 
@@ -638,7 +990,7 @@ export class ToppingPhase {
       }
     }
 
-    // 今のステップの案内（トッピング済みの一瞬の間は表示しない）
+    // 今のステップの案内＋カード（トッピング済みの一瞬の間は表示しない）
     if (this.stepIndex < STEPS.length && this.justAppliedAt === null) {
       const step = STEPS[this.stepIndex];
 
@@ -658,7 +1010,7 @@ export class ToppingPhase {
       ctx.fillText(step.prompt, width / 2, barY);
       ctx.restore();
 
-      // 「タップして」：縁取り＋点滅で見やすく
+      // 「カードをドラッグしてのせよう」：縁取り＋点滅で見やすく
       const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin((elapsedSeconds * Math.PI * 2) / 1.4));
       ctx.save();
       ctx.globalAlpha = blinkAlpha;
@@ -666,10 +1018,35 @@ export class ToppingPhase {
       ctx.font = "bold 18px sans-serif";
       ctx.lineWidth = 4;
       ctx.strokeStyle = "#fff";
-      ctx.strokeText("タップして", width / 2, height * 0.21);
+      ctx.strokeText("ドラッグしてのせよう", width / 2, height * 0.21);
       ctx.fillStyle = "#e0552b";
-      ctx.fillText("タップして", width / 2, height * 0.21);
+      ctx.fillText("ドラッグしてのせよう", width / 2, height * 0.21);
       ctx.restore();
+
+      // ドラッグ中：本体まわりに「ここに乗せてね」の点線リングを表示
+      if (this.dragging) {
+        ctx.save();
+        ctx.setLineDash([10, 8]);
+        ctx.strokeStyle = "rgba(255,209,102,0.85)";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.ellipse(bodyCenterX, bodyCenterY, w * DROP_ZONE_RADIUS_RATIO, bodyH * DROP_ZONE_RADIUS_RATIO, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // カード本体（ドラッグ中は元の位置に薄い枠だけ残す）
+      this._renderCard(ctx, width, height, step.type, elapsedSeconds);
+    }
+
+    // ドラッグ中のカード（指・マウスに追従）
+    if (this.dragging) {
+      this._renderDraggingCard(ctx, width, height);
+    }
+
+    // ドラッグ中、左下・右下から出てくる応援キャラ（震える→ドロップではじける）
+    if (this.dragCharState.visible) {
+      this._renderDragCharacters(ctx, width, height, elapsedSeconds);
     }
 
     // ---- 「パーフェクト！」：クリア画面の前に、これだけを表示する ----

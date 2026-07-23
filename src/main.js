@@ -150,7 +150,7 @@ function renderUI() {
     const scoreBtn = document.createElement("button");
     scoreBtn.className = "btn";
     scoreBtn.style.cssText = "background:#5a2d0c;box-shadow:0 4px 0 #3a1d08;line-height:1.4;";
-    scoreBtn.innerHTML = 'シークレットモード<br><span style="font-size:11px;font-weight:normal;opacity:0.85;">（むずかしい）</span>';
+    scoreBtn.textContent = "シークレットモード";
     scoreBtn.onclick = () => {
       playSfx(SOUNDS.start);
       if (!bgmStarted) {
@@ -295,21 +295,28 @@ canvas.addEventListener("pointerdown", (e) => {
   } else if (state.scene === SCENES.TOPPING && toppingPhase) {
     const { x, y } = getPos(e);
     toppingPhase.handleTap(t, x, y, width, height);
+    toppingPhase.handlePointerDown(x, y, t, width, height);
   }
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  if (state.scene !== SCENES.ADULT_TOPPING || !adultToppingPhase) return;
   const t = performance.now() / 1000;
   const { x, y } = getPos(e);
-  adultToppingPhase.handlePointerMove(x, y, t, width, height);
+  if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
+    adultToppingPhase.handlePointerMove(x, y, t, width, height);
+  } else if (state.scene === SCENES.TOPPING && toppingPhase) {
+    toppingPhase.handlePointerMove(x, y, t, width, height);
+  }
 });
 
 canvas.addEventListener("pointerup", (e) => {
-  if (state.scene !== SCENES.ADULT_TOPPING || !adultToppingPhase) return;
   const t = performance.now() / 1000;
   const { x, y } = getPos(e);
-  adultToppingPhase.handlePointerUp(x, y, t);
+  if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
+    adultToppingPhase.handlePointerUp(x, y, t);
+  } else if (state.scene === SCENES.TOPPING && toppingPhase) {
+    toppingPhase.handlePointerUp(x, y, t, width, height);
+  }
 });
 
 // ---------- メインループ ----------

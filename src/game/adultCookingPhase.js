@@ -236,7 +236,7 @@ export class AdultCookingPhase {
 
     if (this.stage === STAGE.POWER) {
       this.powerTapCount += 1;
-      playSfx(SOUNDS.toppingTap);
+      playSfx(SOUNDS.flipFirst);
       if (this.powerTapCount >= POWER_TARGET_TAPS) {
         const remaining = Math.max(POWER_TIME_LIMIT - (elapsedSeconds - this.powerStartedAt), 0);
         this.lastPowerScore = Math.min(70 + Math.round((remaining / POWER_TIME_LIMIT) * 30), 100);
@@ -362,9 +362,11 @@ export class AdultCookingPhase {
     if (this.stage === STAGE.FINISHED) {
       ctx.save();
       ctx.textAlign = "center";
-      ctx.font = "bold 30px sans-serif";
+      const finalScoreText = `さいしゅうスコア：${this.totalScore}点`;
+      const finalScoreSize = this._fitFontSize(ctx, finalScoreText, width * 0.92, 30);
+      ctx.font = `bold ${finalScoreSize}px sans-serif`;
       ctx.fillStyle = "#e0552b";
-      ctx.fillText(`さいしゅうスコア：${this.totalScore}点`, width / 2, height * 0.75);
+      ctx.fillText(finalScoreText, width / 2, height * 0.75);
       ctx.restore();
     }
   }
@@ -400,16 +402,29 @@ export class AdultCookingPhase {
     ctx.restore();
   }
 
+  // 見出し文字が画面幅に収まるよう、必要ならフォントサイズを縮める（スマホ幅対策）
+  _fitFontSize(ctx, text, maxWidth, baseSize, minSize = 16) {
+    let size = baseSize;
+    ctx.font = `bold ${size}px sans-serif`;
+    while (ctx.measureText(text).width > maxWidth && size > minSize) {
+      size -= 1;
+      ctx.font = `bold ${size}px sans-serif`;
+    }
+    return size;
+  }
+
   _renderLeverMeter(ctx, width, height, elapsedSeconds, { frozen }) {
     // 上部に大きく「真ん中をねらえ！」
     ctx.save();
     ctx.textAlign = "center";
-    ctx.font = "bold 30px sans-serif";
+    const leverHeadingText = "真ん中をねらえ！";
+    const leverHeadingSize = this._fitFontSize(ctx, leverHeadingText, width * 0.92, 30);
+    ctx.font = `bold ${leverHeadingSize}px sans-serif`;
     ctx.lineWidth = 7;
     ctx.strokeStyle = "#000";
-    ctx.strokeText("真ん中をねらえ！", width / 2, height * 0.2);
+    ctx.strokeText(leverHeadingText, width / 2, height * 0.2);
     ctx.fillStyle = "#ffcf5c";
-    ctx.fillText("真ん中をねらえ！", width / 2, height * 0.2);
+    ctx.fillText(leverHeadingText, width / 2, height * 0.2);
     ctx.restore();
 
     // 残り時間：見出しのすぐ下に大きく表示（フリーズ中は表示しない）
@@ -507,12 +522,14 @@ export class AdultCookingPhase {
   _renderPowerMeter(ctx, width, height, elapsedSeconds) {
     ctx.save();
     ctx.textAlign = "center";
-    ctx.font = "bold 30px sans-serif";
+    const powerHeadingText = "パワーをためてひっくり返せ！";
+    const powerHeadingSize = this._fitFontSize(ctx, powerHeadingText, width * 0.92, 30);
+    ctx.font = `bold ${powerHeadingSize}px sans-serif`;
     ctx.lineWidth = 7;
     ctx.strokeStyle = "#000";
-    ctx.strokeText("パワーをためてひっくり返せ！", width / 2, height * 0.2);
+    ctx.strokeText(powerHeadingText, width / 2, height * 0.2);
     ctx.fillStyle = "#ffcf5c";
-    ctx.fillText("パワーをためてひっくり返せ！", width / 2, height * 0.2);
+    ctx.fillText(powerHeadingText, width / 2, height * 0.2);
     ctx.restore();
 
     // 残り時間：ゲージ（テコメーター）フェーズと同じ位置・見た目に統一

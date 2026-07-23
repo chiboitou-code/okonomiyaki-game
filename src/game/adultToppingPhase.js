@@ -6,7 +6,7 @@ import { isShareSupported, shareScreenshot } from "./share.js";
 import gsap from "gsap";
 
 // ---- 調整用の定数 ----
-const SAUCE_TIME_LIMIT = 4.0; // 秒。ソース（ジグザグ）の制限時間
+const SAUCE_TIME_LIMIT = 5.0; // 秒。ソース（渦巻き）の制限時間
 const MAYO_TIME_LIMIT = 5.0; // 秒。マヨネーズ（急カーブ連続）の制限時間
 const SAUCE_MAX_DEVIATION_RATIO = 0.13; // 本体幅に対する「これ以上ズレたら0点」の許容ズレ
 const MAYO_MAX_DEVIATION_RATIO = 0.1; // マヨネーズはより厳しめ
@@ -136,8 +136,7 @@ export class AdultToppingPhase {
     this.selectedCard = null; // "aonori" | "edamame" | "katsuobushi" | null
     this.seasoningScore = 0;
     this.seasoningTapCounts = { aonori: 0, edamame: 0, katsuobushi: 0 };
-    this.seasoningPlaced = { aonori: [], edamame: [], katsuobushi: [] }; // 着地済みの粒（種類ごとに配列）
-    this.seasoningDrawOrder = ["aonori", "edamame", "katsuobushi"]; // 描画順（配列の後ろほど手前・上に重なる）
+    this.seasoningPlacedList = []; // 着地済みの粒を置いた順番のまま保持（{type, ...}）。既に乗っている分の重なり順は変えない
     this.seasoningScorePopups = []; // タップ毎に一瞬表示する「+20」等のポップ { x, y, text, color, age }
     this.seasoningSessionStartedAt = null;
 
@@ -317,8 +316,7 @@ export class AdultToppingPhase {
       this.selectedCard = null;
       this.seasoningScore = 0;
       this.seasoningTapCounts = { aonori: 0, edamame: 0, katsuobushi: 0 };
-      this.seasoningPlaced = { aonori: [], edamame: [], katsuobushi: [] };
-      this.seasoningDrawOrder = ["aonori", "edamame", "katsuobushi"];
+      this.seasoningPlacedList = [];
       this.seasoningScorePopups = [];
       this.seasoningSessionStartedAt = null;
       this._enterStage(STAGE.SEASONING_PLAY, elapsedSeconds);
@@ -330,6 +328,11 @@ export class AdultToppingPhase {
         const shareX = width - 40;
         const shareY = 40;
         if (x >= shareX - 34 && x <= shareX + 34 && y >= shareY - 30 && y <= shareY + 50) {
+          // シェアボタン自体がスクショに写り込まないよう、ボタン無しの状態を一度描き直してから撮影する
+          if (this._canvasEl) {
+            const shareCtx = this._canvasEl.getContext("2d");
+            this._renderClearScreenContent(shareCtx, width, height);
+          }
           shareScreenshot(this._canvasEl, "okonomiyaki.png");
           return;
         }
@@ -380,9 +383,6 @@ export class AdultToppingPhase {
       const colWidth = width / SEASONING_CARD_TYPES.length;
       const index = Math.min(Math.max(Math.floor(x / colWidth), 0), SEASONING_CARD_TYPES.length - 1);
       this.selectedCard = SEASONING_CARD_TYPES[index];
-      // 選び直したトッピングが一番上に重なるよう、描画順の最後尾に移動する
-      this.seasoningDrawOrder = this.seasoningDrawOrder.filter((t) => t !== this.selectedCard);
-      this.seasoningDrawOrder.push(this.selectedCard);
       playSfx(SOUNDS.toppingTap);
       return;
     }
@@ -426,7 +426,7 @@ export class AdultToppingPhase {
       const sizeY = baseSize * (0.3 + Math.random() * 0.5); // 偏平にして「フレーク感」を出す
       const rotation = Math.random() * Math.PI * 2;
       const color = AONORI_COLORS[Math.floor(Math.random() * AONORI_COLORS.length)];
-      this.seasoningPlaced.aonori.push({ x: fx, y: fy, sizeX, sizeY, rotation, color });
+      this.seasoningPlacedList.push({ type: "aonori", x: fx, y: fy, sizeX, sizeY, rotation, color });
     }
   }
 
@@ -442,7 +442,7 @@ export class AdultToppingPhase {
       const len = (Math.random() * 0.15 + 0.9) * baseLen;
       const rotation = Math.random() * Math.PI * 2;
       const isThreeBeans = Math.random() < 0.55;
-      this.seasoningPlaced.edamame.push({ x: px, y: py, len, rotation, isThreeBeans });
+      this.seasoningPlacedList.push({ type: "edamame", x: px, y: py, len, rotation, isThreeBeans });
     }
   }
 
@@ -485,7 +485,8 @@ export class AdultToppingPhase {
       const shadowOffsetX = width * (isCurled ? 0.012 : 0.008) * (isDust ? 0.3 : 1);
       const shadowOffsetY = width * (isCurled ? 0.016 : 0.01) * (isDust ? 0.3 : 1);
 
-      this.seasoningPlaced.katsuobushi.push({
+      this.seasoningPlacedList.push({
+        type: "katsuobushi",
         x: px,
         y: py,
         len,
@@ -627,14 +628,15 @@ export class AdultToppingPhase {
     }
 
     // 味付けゲームで着地済みの粒（あおのり・枝豆・かつおぶし）はどのステージでも描き続ける
-    // 描画順は「最後に選んだカードが一番上」になるよう seasoningDrawOrder に従う
-    for (const type of this.seasoningDrawOrder) {
-      if (type === "aonori") {
-        for (const flake of this.seasoningPlaced.aonori) this._renderAonoriFlakeAt(ctx, flake);
-      } else if (type === "edamame") {
-        for (const pod of this.seasoningPlaced.edamame) this._renderEdamameAt(ctx, pod);
-      } else if (type === "katsuobushi") {
-        for (const flake of this.seasoningPlaced.katsuobushi) this._renderKatsuobushiAt(ctx, flake);
+    // 置いた順番のまま描画することで、すでに乗っている分の重なり順は変わらず、
+    // カードを選び直した後の新しいタップ分だけが自然と一番上に乗る
+    for (const particle of this.seasoningPlacedList) {
+      if (particle.type === "aonori") {
+        this._renderAonoriFlakeAt(ctx, particle);
+      } else if (particle.type === "edamame") {
+        this._renderEdamameAt(ctx, particle);
+      } else if (particle.type === "katsuobushi") {
+        this._renderKatsuobushiAt(ctx, particle);
       }
     }
 
@@ -1165,6 +1167,12 @@ export class AdultToppingPhase {
 
   // クリア画面（かんせい画像＋紙吹雪＋総合スコア＋「タップしてタイトルへ」）
   _renderClearScreen(ctx, width, height) {
+    this._renderClearScreenContent(ctx, width, height);
+    this._renderShareButton(ctx, width);
+  }
+
+  // クリア画面の中身（シェアボタンを除く）。シェア撮影時にボタン無しで撮り直すために分離してある。
+  _renderClearScreenContent(ctx, width, height) {
     if (this.selectedCompleteImg && isReady(this.selectedCompleteImg)) {
       const img = this.selectedCompleteImg;
       const scale = Math.max(width / img.naturalWidth, height / img.naturalHeight);
@@ -1202,8 +1210,6 @@ export class AdultToppingPhase {
     ctx.font = "bold 24px sans-serif";
     ctx.fillText("タップしてタイトルへ", width / 2, height * 0.93);
     ctx.restore();
-
-    this._renderShareButton(ctx, width);
   }
 
   // クリア画面右上の「シェア」ボタン（Web Share API非対応のブラウザでは表示しない）
@@ -1320,6 +1326,17 @@ export class AdultToppingPhase {
     }
   }
 
+  // 見出し文字が画面幅に収まるよう、必要ならフォントサイズを縮める（スマホ幅対策）
+  _fitFontSize(ctx, text, maxWidth, baseSize, minSize = 16) {
+    let size = baseSize;
+    ctx.font = `bold ${size}px sans-serif`;
+    while (ctx.measureText(text).width > maxWidth && size > minSize) {
+      size -= 1;
+      ctx.font = `bold ${size}px sans-serif`;
+    }
+    return size;
+  }
+
   _renderExplain(ctx, width, height, title, lines) {
     ctx.save();
     ctx.fillStyle = "rgba(0,0,0,0.55)";
@@ -1327,7 +1344,8 @@ export class AdultToppingPhase {
 
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffcf5c";
-    ctx.font = "bold 26px sans-serif";
+    const titleSize = this._fitFontSize(ctx, title, width * 0.9, 26);
+    ctx.font = `bold ${titleSize}px sans-serif`;
     ctx.fillText(title, width / 2, height * 0.24);
 
     ctx.fillStyle = "#fff";
