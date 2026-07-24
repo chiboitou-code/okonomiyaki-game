@@ -10,7 +10,7 @@ const SAUCE_TIME_LIMIT = 5.0; // 秒。ソース（渦巻き）の制限時間
 const MAYO_TIME_LIMIT = 5.0; // 秒。マヨネーズ（急カーブ連続）の制限時間
 const SAUCE_MAX_DEVIATION_RATIO = 0.13; // 本体幅に対する「これ以上ズレたら0点」の許容ズレ
 const MAYO_MAX_DEVIATION_RATIO = 0.1; // マヨネーズはより厳しめ
-const SAUCE_SPIRAL_TURNS = 2.5; // ソースの渦巻きの巻き数
+const SAUCE_SPIRAL_TURNS = 2.0; // ソースの渦巻きの巻き数（指でなぞりやすいよう間隔を広めに）
 const RESULT_PAUSE = 1.2; // 秒。結果表示の時間
 const COUNTDOWN_Y_RATIO = 0.06; // 全ゲーム共通：残り時間カウントダウンの表示位置（画面上部・タップの邪魔にならない位置）
 
@@ -77,6 +77,18 @@ const CARD_FALLBACK_COLOR = {
   katsuobushi: "#c98a55",
 };
 
+// 味付けゲーム後、右下からトコトコ歩いてきて褒めてくれるキャラの演出
+const PRAISE_CHARACTER_IMG = loadImage("/images/ui/character_1.png");
+const PRAISE_WALK_DURATION = 1.0; // 秒。歩いてくる時間
+const PRAISE_PHRASES = [
+  "げいじゅつやな！",
+  "やるやん！",
+  "ええ仕事するやん！",
+  "才能あるでコレ！",
+  "天才かいな！",
+  "ようやった！",
+];
+
 const STAGE = {
   EXPLAIN_SAUCE: "explain_sauce",
   SAUCE_TRACE: "sauce_trace",
@@ -87,6 +99,7 @@ const STAGE = {
   EXPLAIN_SEASONING: "explain_seasoning",
   SEASONING_PLAY: "seasoning_play",
   SEASONING_RESULT: "seasoning_result",
+  SEASONING_PRAISE: "seasoning_praise", // 味付けゲーム後、キャラが歩いてきて褒めてくれる演出
   SCORE_SEQUENCE: "score_sequence", // スコア内訳を順番に表示
   CLEAR: "clear", // クリア画面（かんせい画像＋紙吹雪＋総合スコア）
 };
@@ -144,6 +157,11 @@ export class AdultToppingPhase {
     this.selectedCompleteImg = null;
     this.confetti = [];
     this._lastConfettiSpawn = 0;
+
+    // 味付けゲーム後、キャラが歩いてきて褒めてくれる演出の状態
+    this.praiseMessage = "";
+    this.praiseArrived = false;
+    this.praiseCharPos = { x: 0 };
   }
 
   _enterStage(stage, elapsedSeconds) {
@@ -175,7 +193,7 @@ export class AdultToppingPhase {
   _getMayoPathPoints(width, height) {
     const cx = width / 2;
     const ampX = width * 0.28; // 横方向の振れ幅
-    const frequency = 5; // カーブの数（6→5に調整、少しやさしく）
+    const frequency = 4; // カーブの数（指でなぞりやすいよう間隔を広めに）
     const yStart = height * 0.33;
     const yEnd = height * 0.75;
     const points = [];
@@ -262,8 +280,8 @@ export class AdultToppingPhase {
       if (this.debugSingleGame) {
         this.onFinish();
       } else {
-        // スコア内訳を順番に表示
-        this._startScoreSequence(elapsedSeconds);
+        // キャラが歩いてきて褒めてくれる演出を挟んでから、スコア内訳へ
+        this._enterSeasoningPraise(elapsedSeconds);
       }
     }
 
@@ -320,6 +338,12 @@ export class AdultToppingPhase {
       this.seasoningScorePopups = [];
       this.seasoningSessionStartedAt = null;
       this._enterStage(STAGE.SEASONING_PLAY, elapsedSeconds);
+      return;
+    }
+    if (this.stage === STAGE.SEASONING_PRAISE) {
+      playSfx(SOUNDS.start);
+      gsap.killTweensOf(this.praiseCharPos);
+      this._startScoreSequence(elapsedSeconds);
       return;
     }
     if (this.stage === STAGE.CLEAR) {
@@ -599,6 +623,7 @@ export class AdultToppingPhase {
       STAGE.EXPLAIN_SEASONING,
       STAGE.SEASONING_PLAY,
       STAGE.SEASONING_RESULT,
+      STAGE.SEASONING_PRAISE,
       STAGE.SCORE_SEQUENCE,
     ];
     if (sauceAppliedStages.includes(this.stage) && isReady(SAUCE_APPLIED_IMG)) {
@@ -621,6 +646,7 @@ export class AdultToppingPhase {
       STAGE.EXPLAIN_SEASONING,
       STAGE.SEASONING_PLAY,
       STAGE.SEASONING_RESULT,
+      STAGE.SEASONING_PRAISE,
       STAGE.SCORE_SEQUENCE,
     ];
     if (mayoPersistStages.includes(this.stage) && this.tracePathHistory.length > 1) {
@@ -778,6 +804,10 @@ export class AdultToppingPhase {
     if (this.stage === STAGE.SEASONING_RESULT) {
       this._renderSeasoningCards(ctx, width, height);
       this._renderScorePopup(ctx, width, height, "味付けゲーム", this.lastScore);
+    }
+
+    if (this.stage === STAGE.SEASONING_PRAISE) {
+      this._renderSeasoningPraise(ctx, width, height, elapsedSeconds);
     }
 
     // スコアシーケンス表示
@@ -1084,6 +1114,99 @@ export class AdultToppingPhase {
     ctx.fillStyle = "#fff";
     ctx.font = "bold 42px sans-serif";
     ctx.fillText(`${score} 点`, width / 2, height * 0.74);
+    ctx.restore();
+  }
+
+  // 味付けゲーム終了後、右下からキャラがトコトコ歩いてきて褒めてくれる演出を開始する
+  _enterSeasoningPraise(elapsedSeconds) {
+    this.praiseMessage = PRAISE_PHRASES[Math.floor(Math.random() * PRAISE_PHRASES.length)];
+    this.praiseArrived = false;
+
+    const startX = this._lastWidth + 80; // 画面外（右）からスタート
+    const targetX = this._lastWidth * 0.72; // 歩いて止まる位置
+
+    gsap.killTweensOf(this.praiseCharPos);
+    this.praiseCharPos.x = startX;
+    gsap.to(this.praiseCharPos, {
+      x: targetX,
+      duration: PRAISE_WALK_DURATION,
+      ease: "power1.out",
+      onComplete: () => {
+        this.praiseArrived = true;
+      },
+    });
+
+    this._enterStage(STAGE.SEASONING_PRAISE, elapsedSeconds);
+  }
+
+  // 右下からトコトコ歩いてきたキャラ＋関西弁の吹き出しを描画
+  _renderSeasoningPraise(ctx, width, height, elapsedSeconds) {
+    const groundY = height * 0.86;
+    const charH = width * 0.34;
+    const img = PRAISE_CHARACTER_IMG;
+    const charW = isReady(img) ? charH * (img.naturalWidth / img.naturalHeight) : charH * 0.62;
+    const charX = this.praiseCharPos.x;
+
+    // トコトコ歩く上下動（到着したら止まる）
+    const bob = this.praiseArrived ? 0 : Math.abs(Math.sin(elapsedSeconds * 11)) * 6;
+
+    ctx.save();
+    if (isReady(img)) {
+      ctx.drawImage(img, charX - charW / 2, groundY - charH - bob, charW, charH);
+    } else {
+      // フォールバック：シンプルな丸キャラ
+      ctx.fillStyle = "#ffb385";
+      ctx.beginPath();
+      ctx.ellipse(charX, groundY - charH * 0.42 - bob, charW * 0.45, charH * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = `${Math.round(charH * 0.32)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("😊", charX, groundY - charH * 0.42 - bob);
+      ctx.textBaseline = "alphabetic";
+    }
+    ctx.restore();
+
+    if (!this.praiseArrived) return;
+
+    // 吹き出し
+    ctx.save();
+    ctx.textAlign = "center";
+    const fontSize = this._fitFontSize(ctx, this.praiseMessage, width * 0.6, 22);
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    const textW = ctx.measureText(this.praiseMessage).width;
+    const bubbleW = textW + 48;
+    const bubbleH = 56;
+    const bubbleBottomY = groundY - charH - 30;
+    const bubbleX = Math.min(charX, width - bubbleW / 2 - 12);
+
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.roundRect(bubbleX - bubbleW / 2, bubbleBottomY - bubbleH, bubbleW, bubbleH, 16);
+    ctx.fill();
+    // 吹き出しのしっぽ
+    ctx.beginPath();
+    ctx.moveTo(bubbleX - 12, bubbleBottomY);
+    ctx.lineTo(bubbleX + 12, bubbleBottomY);
+    ctx.lineTo(bubbleX, bubbleBottomY + 16);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#5a2d0c";
+    ctx.fillText(this.praiseMessage, bubbleX, bubbleBottomY - bubbleH / 2 + fontSize / 3);
+    ctx.restore();
+
+    // 「タップしてすすむ」の点滅ヒント
+    const blinkAlpha = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin((elapsedSeconds * Math.PI * 2) / 1.4));
+    ctx.save();
+    ctx.globalAlpha = blinkAlpha;
+    ctx.textAlign = "center";
+    ctx.font = "bold 16px sans-serif";
+    ctx.fillStyle = "#fff";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText("タップしてすすむ", width / 2, height * 0.95);
+    ctx.fillText("タップしてすすむ", width / 2, height * 0.95);
     ctx.restore();
   }
 

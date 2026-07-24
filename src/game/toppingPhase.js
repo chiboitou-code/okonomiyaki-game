@@ -682,10 +682,10 @@ export class ToppingPhase {
     if (appear <= 0) return;
 
     const characters = [
-      { img: CHARACTER_A_IMG, baseX: width * 0.14, dir: -1, seed: 0 },
-      { img: CHARACTER_B_IMG, baseX: width * 0.86, dir: 1, seed: 10 },
+      { img: CHARACTER_A_IMG, baseX: width * 0.06, dir: -1, seed: 0 },
+      { img: CHARACTER_B_IMG, baseX: width * 0.94, dir: 1, seed: 10 },
     ];
-    const baseY = height * 0.86;
+    const baseY = height * 0.56; // 本体の横あたり。カード操作中の指と重ならない高さに配置
 
     for (const { img, baseX, dir, seed } of characters) {
       if (!isReady(img)) continue;

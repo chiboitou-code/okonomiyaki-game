@@ -326,29 +326,35 @@ function loop(now) {
   lastTime = now;
   const elapsedSeconds = now / 1000;
 
-  ctx.clearRect(0, 0, width, height);
+  try {
+    ctx.clearRect(0, 0, width, height);
 
-  // 背景（全シーン共通）
-  if (isReady(BACKGROUND_IMG)) {
-    const scale = Math.max(width / BACKGROUND_IMG.naturalWidth, height / BACKGROUND_IMG.naturalHeight);
-    const drawW = BACKGROUND_IMG.naturalWidth * scale;
-    const drawH = BACKGROUND_IMG.naturalHeight * scale;
-    const offsetY = (height - drawH) * BACKGROUND_VERTICAL_ANCHOR;
-    ctx.drawImage(BACKGROUND_IMG, (width - drawW) / 2, offsetY, drawW, drawH);
-  }
+    // 背景（全シーン共通）
+    if (isReady(BACKGROUND_IMG)) {
+      const scale = Math.max(width / BACKGROUND_IMG.naturalWidth, height / BACKGROUND_IMG.naturalHeight);
+      const drawW = BACKGROUND_IMG.naturalWidth * scale;
+      const drawH = BACKGROUND_IMG.naturalHeight * scale;
+      const offsetY = (height - drawH) * BACKGROUND_VERTICAL_ANCHOR;
+      ctx.drawImage(BACKGROUND_IMG, (width - drawW) / 2, offsetY, drawW, drawH);
+    }
 
-  if (state.scene === SCENES.COOKING && cookingPhase) {
-    cookingPhase.update(deltaSeconds, elapsedSeconds);
-    cookingPhase.render(ctx, width, height, elapsedSeconds);
-  } else if (state.scene === SCENES.ADULT_COOKING && adultCookingPhase) {
-    adultCookingPhase.update(deltaSeconds, elapsedSeconds);
-    adultCookingPhase.render(ctx, width, height, elapsedSeconds);
-  } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
-    adultToppingPhase.update(deltaSeconds, elapsedSeconds, width, height);
-    adultToppingPhase.render(ctx, width, height, elapsedSeconds);
-  } else if (state.scene === SCENES.TOPPING && toppingPhase) {
-    toppingPhase.update(deltaSeconds, elapsedSeconds);
-    toppingPhase.render(ctx, width, height, elapsedSeconds);
+    if (state.scene === SCENES.COOKING && cookingPhase) {
+      cookingPhase.update(deltaSeconds, elapsedSeconds);
+      cookingPhase.render(ctx, width, height, elapsedSeconds);
+    } else if (state.scene === SCENES.ADULT_COOKING && adultCookingPhase) {
+      adultCookingPhase.update(deltaSeconds, elapsedSeconds);
+      adultCookingPhase.render(ctx, width, height, elapsedSeconds);
+    } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
+      adultToppingPhase.update(deltaSeconds, elapsedSeconds, width, height);
+      adultToppingPhase.render(ctx, width, height, elapsedSeconds);
+    } else if (state.scene === SCENES.TOPPING && toppingPhase) {
+      toppingPhase.update(deltaSeconds, elapsedSeconds);
+      toppingPhase.render(ctx, width, height, elapsedSeconds);
+    }
+  } catch (err) {
+    // 何らかの想定外のエラーが起きても、画面が完全にフリーズしないようにする
+    // （ここでエラーを飲み込んでも、次のフレームでまた描き直されるので致命的にはならない）
+    console.error("game loop error:", err);
   }
 
   requestAnimationFrame(loop);
