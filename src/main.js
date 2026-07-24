@@ -229,6 +229,9 @@ function startCooking() {
     onFail: () => {
       startCooking();
     },
+    onBackToTitle: () => {
+      resetGame();
+    },
   });
   renderUI();
 }
@@ -290,7 +293,8 @@ function getPos(e) {
 canvas.addEventListener("pointerdown", (e) => {
   const t = performance.now() / 1000;
   if (state.scene === SCENES.COOKING && cookingPhase) {
-    cookingPhase.handleTap(t);
+    const { x, y } = getPos(e);
+    cookingPhase.handleTap(t, x, y, width, height);
   } else if (state.scene === SCENES.ADULT_COOKING && adultCookingPhase) {
     adultCookingPhase.handleTap(t);
   } else if (state.scene === SCENES.ADULT_TOPPING && adultToppingPhase) {
@@ -367,7 +371,7 @@ function loop(now) {
 
 // ---------- 起動処理：画像が揃うまでローディング画面を表示してから開始 ----------
 showLoadingUI();
-waitForAllImages({ timeoutMs: 10000, onProgress: updateLoadingUI }).then(() => {
+waitForAllImages({ timeoutMs: 20000, onProgress: updateLoadingUI }).then(() => {
   renderUI();
   requestAnimationFrame(loop);
 });

@@ -58,6 +58,14 @@ const KATSUOBUSHI_COLORS = [
 const CONFETTI_COLORS = ["#ff8a3d", "#ffd166", "#8bd17c", "#5eb0ef", "#ff6b9d"];
 const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
 
+// ソース・マヨネーズなぞりゲーム、クリア時の演出（通常モードの味付けフェーズと同じ強めの演出）
+const TRACE_FLASH_DURATION = 0.32; // 秒
+const TRACE_SPARKLE_LIFETIME = 0.6; // 秒
+const TRACE_SPARKLE_COUNT = 26;
+const TRACE_STAR_BURST_COUNT = 10;
+const TRACE_STAR_BURST_LIFETIME = 0.7; // 秒
+const TRACE_SPARKLE_COLOR = "#ffd166";
+
 const COOKED_BODY_IMG = loadImage("/images/okonomiyaki/body_04_porkside.png");
 const PLATE_IMG = loadImage("/images/ui/plate.png");
 const SAUCE_APPLIED_IMG = loadImage("/images/toppings/topping_sauce.png");
@@ -128,6 +136,12 @@ export class AdultToppingPhase {
     this.sauceScore = 0; // スコアシーケンス表示用に個別保持
     this.mayoScore = 0; // スコアシーケンス表示用に個別保持
     this.scoreBounce = { scale: 1, flash: 0 }; // GSAPで動かす値。render側はこれをそのまま読むだけ
+
+    // ソース・マヨネーズなぞりゲームのクリア演出用の状態
+    this.traceFlashAt = null;
+    this.traceSparkles = []; // { angle, speed, age, size }
+    this.traceStarBursts = []; // { angle, speed, age, rotation, rotSpeed, size }
+    this.traceBodyBounce = { scale: 1 };
 
     // スコアシーケンス表示用
     this.scoreSequenceItems = []; // 表示するスコア項目の配列
@@ -246,6 +260,15 @@ export class AdultToppingPhase {
   update(deltaSeconds, elapsedSeconds, width, height) {
     if (width) this._lastWidth = width;
     if (height) this._lastHeight = height;
+
+    for (const s of this.traceSparkles) {
+      s.age += deltaSeconds;
+    }
+    this.traceSparkles = this.traceSparkles.filter((s) => s.age < TRACE_SPARKLE_LIFETIME);
+    for (const s of this.traceStarBursts) {
+      s.age += deltaSeconds;
+    }
+    this.traceStarBursts = this.traceStarBursts.filter((s) => s.age < TRACE_STAR_BURST_LIFETIME);
 
     if ((this.stage === STAGE.SAUCE_TRACE || this.stage === STAGE.MAYO_TRACE) && this.tracing) {
       const limit = this.stage === STAGE.SAUCE_TRACE ? SAUCE_TIME_LIMIT : MAYO_TIME_LIMIT;
@@ -589,7 +612,61 @@ export class AdultToppingPhase {
     }
     this._bounceScore();
     playSfx(reachedEnd ? SOUNDS.clear : SOUNDS.toppingTap);
+    if (reachedEnd) {
+      this._triggerTraceCelebration();
+    }
     this._enterStage(isMayo ? STAGE.MAYO_RESULT : STAGE.SAUCE_RESULT, elapsedSeconds);
+  }
+
+  // ソース・マヨネーズなぞりゲームをクリアした瞬間の演出（フラッシュ・キラキラ・星のはじけ・本体バウンド）
+  _triggerTraceCelebration() {
+    this.traceFlashAt = performance.now() / 1000;
+
+    for (let i = 0; i < TRACE_SPARKLE_COUNT; i++) {
+      this.traceSparkles.push({
+        angle: Math.random() * Math.PI * 2,
+        speed: 0.6 + Math.random() * 0.6,
+        age: 0,
+        size: 3 + Math.random() * 4,
+      });
+    }
+
+    for (let i = 0; i < TRACE_STAR_BURST_COUNT; i++) {
+      this.traceStarBursts.push({
+        angle: Math.random() * Math.PI * 2,
+        speed: 0.8 + Math.random() * 0.7,
+        age: 0,
+        rotation: Math.random() * Math.PI * 2,
+        rotSpeed: (Math.random() - 0.5) * 8,
+        size: 10 + Math.random() * 10,
+      });
+    }
+
+    gsap.killTweensOf(this.traceBodyBounce);
+    gsap
+      .timeline()
+      .to(this.traceBodyBounce, { scale: 1.12, duration: 0.1, ease: "back.out(2)" })
+      .to(this.traceBodyBounce, { scale: 1, duration: 0.45, ease: "elastic.out(1.1, 0.3)" });
+  }
+
+  // 星形のパスを(0,0)中心に描く（fill/strokeは呼び出し側で行う）
+  _drawStarPath(ctx, size) {
+    const spikes = 5;
+    const outerR = size;
+    const innerR = size * 0.45;
+    ctx.beginPath();
+    for (let i = 0; i < spikes * 2; i++) {
+      const r = i % 2 === 0 ? outerR : innerR;
+      const angle = (Math.PI / spikes) * i - Math.PI / 2;
+      const px = Math.cos(angle) * r;
+      const py = Math.sin(angle) * r;
+      if (i === 0) {
+        ctx.moveTo(px, py);
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.closePath();
   }
 
   render(ctx, width, height, elapsedSeconds) {
@@ -604,6 +681,12 @@ export class AdultToppingPhase {
     const bodyCenterX = width / 2;
     const bodyCenterY = height * BODY_CENTER_Y_RATIO;
     const w = width * BODY_WIDTH_RATIO;
+
+    // 本体まわり一式を、ソース・マヨネーズなぞりクリアの瞬間ポンと弾ませる
+    ctx.save();
+    ctx.translate(bodyCenterX, bodyCenterY);
+    ctx.scale(this.traceBodyBounce.scale, this.traceBodyBounce.scale);
+    ctx.translate(-bodyCenterX, -bodyCenterY);
 
     // お皿・本体（共通）
     if (isReady(PLATE_IMG)) {
@@ -664,6 +747,85 @@ export class AdultToppingPhase {
       } else if (particle.type === "katsuobushi") {
         this._renderKatsuobushiAt(ctx, particle);
       }
+    }
+    ctx.restore();
+
+    // ---- ソース・マヨネーズなぞりクリア演出：白フラッシュ＋衝撃波リング ----
+    if (this.traceFlashAt !== null) {
+      const flashT = elapsedSeconds - this.traceFlashAt;
+      if (flashT < TRACE_FLASH_DURATION) {
+        const flashAlpha = 1 - flashT / TRACE_FLASH_DURATION;
+        const flashRadius = w * 0.75;
+        const gradient = ctx.createRadialGradient(bodyCenterX, bodyCenterY, 0, bodyCenterX, bodyCenterY, flashRadius);
+        gradient.addColorStop(0, `rgba(255,255,255,${flashAlpha})`);
+        gradient.addColorStop(0.6, `rgba(255,240,180,${0.6 * flashAlpha})`);
+        gradient.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.save();
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(bodyCenterX, bodyCenterY, flashRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        const ringProgress = flashT / TRACE_FLASH_DURATION;
+        const ringRadius = w * (0.35 + ringProgress * 0.5);
+        ctx.save();
+        ctx.globalAlpha = (1 - ringProgress) * 0.8;
+        ctx.strokeStyle = "#ffd166";
+        ctx.lineWidth = 6 * (1 - ringProgress * 0.6);
+        ctx.beginPath();
+        ctx.arc(bodyCenterX, bodyCenterY, ringRadius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        this.traceFlashAt = null;
+      }
+    }
+
+    // ---- キラキラ粒子 ----
+    const traceBurstRadius = w * 0.5;
+    for (const s of this.traceSparkles) {
+      const progress = s.age / TRACE_SPARKLE_LIFETIME;
+      const distance = s.speed * traceBurstRadius * progress;
+      const alpha = 1 - progress;
+      const px = bodyCenterX + Math.cos(s.angle) * distance;
+      const py = bodyCenterY + Math.sin(s.angle) * distance;
+      const size = s.size * (1 - progress * 0.4);
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.fillStyle = TRACE_SPARKLE_COLOR;
+      ctx.shadowColor = TRACE_SPARKLE_COLOR;
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(px, py, size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ---- 星がキラキラはじけ飛ぶ演出 ----
+    const traceStarBurstRadius = w * 0.75;
+    for (const s of this.traceStarBursts) {
+      const progress = s.age / TRACE_STAR_BURST_LIFETIME;
+      const eased = 1 - (1 - progress) * (1 - progress);
+      const distance = s.speed * traceStarBurstRadius * eased;
+      const alpha = 1 - progress;
+      const px = bodyCenterX + Math.cos(s.angle) * distance;
+      const py = bodyCenterY + Math.sin(s.angle) * distance;
+      const rotation = s.rotation + s.rotSpeed * s.age;
+      const scale = 1 - progress * 0.5;
+
+      ctx.save();
+      ctx.globalAlpha = Math.max(alpha, 0);
+      ctx.translate(px, py);
+      ctx.rotate(rotation);
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "#ffd166";
+      ctx.shadowColor = "#ffd166";
+      ctx.shadowBlur = 8;
+      this._drawStarPath(ctx, s.size);
+      ctx.fill();
+      ctx.restore();
     }
 
     if (this.stage === STAGE.EXPLAIN_SAUCE) {
@@ -1244,7 +1406,7 @@ export class AdultToppingPhase {
 
   // スコアシーケンスの更新
   _updateScoreSequence(elapsedSeconds) {
-    const DISPLAY_DURATION = 1.5; // 各項目の表示時間（秒）
+    const DISPLAY_DURATION = 2.2; // 各項目の表示時間（秒、ゆっくりめに）
     const elapsed = elapsedSeconds - this.scoreSequenceStartedAt;
     const totalItems = this.scoreSequenceItems.length;
     const totalDuration = totalItems * DISPLAY_DURATION;
@@ -1397,7 +1559,7 @@ export class AdultToppingPhase {
 
   // スコアシーケンスの描画
   _renderScoreSequence(ctx, width, height, elapsedSeconds) {
-    const DISPLAY_DURATION = 1.5; // 各項目の表示時間（秒）
+    const DISPLAY_DURATION = 2.2; // 各項目の表示時間（秒、ゆっくりめに）
     const elapsed = elapsedSeconds - this.scoreSequenceStartedAt;
     const currentIndex = Math.floor(elapsed / DISPLAY_DURATION);
     const itemProgress = (elapsed % DISPLAY_DURATION) / DISPLAY_DURATION; // 0〜1

@@ -9,7 +9,7 @@ const TOTAL_FLIPS = 4;
 const SUCCESS_DISPLAY_DURATION = 0.9; // 秒。成功演出（文字・星・キャラ）を表示しておく時間
 const CHARACTER_POP_GROW_DURATION = 0.2; // 秒。キャラがポンと出てくるまでの時間（この後は縮小せずそのまま表示）
 const TURN_TIME_LIMIT = 10; // 秒。各ターンの制限時間
-const SCORE_SEQUENCE_DURATION = 1.5; // スコアシーケンス各項目の表示時間（秒）
+const SCORE_SEQUENCE_DURATION = 2.2; // スコアシーケンス各項目の表示時間（秒、ゆっくりめに）
 
 // ---- 難易度カーブ（回数が進むごとに速く・成功ゾーンが狭くなる） ----
 const BASE_SPEED = 0.5;
@@ -48,9 +48,10 @@ const BODY_IMAGES = [
 ];
 
 export class CookingPhase {
-  constructor({ onComplete, onFail }) {
+  constructor({ onComplete, onFail, onBackToTitle = null }) {
     this.onComplete = onComplete;
     this.onFail = onFail;
+    this.onBackToTitle = onBackToTitle;
     this.showingExplain = true; // 開始時の解説画面
     this.flipIndex = 0;
     this.results = [];
@@ -248,7 +249,7 @@ export class CookingPhase {
     this.steamParticles = this.steamParticles.filter((p) => p.alpha > 0);
   }
 
-  handleTap(elapsedSeconds) {
+  handleTap(elapsedSeconds, x, y, width, height) {
     if (this.showingExplain) {
       playSfx(SOUNDS.start);
       this.showingExplain = false;
@@ -257,6 +258,11 @@ export class CookingPhase {
     }
 
     if (this.awaitingRetry) {
+      if (this.onBackToTitle && height !== undefined && y >= height * 0.94) {
+        playSfx(SOUNDS.retryTap);
+        this.onBackToTitle();
+        return;
+      }
       playSfx(SOUNDS.retryTap);
       this.isTimeUp = false; // リトライ時にフラグをリセット
       this.onFail();
@@ -341,8 +347,18 @@ export class CookingPhase {
       ctx.fillStyle = "#ffcf5c";
       ctx.font = "bold 26px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("もういっかいする", centerX, height * 0.93);
+      ctx.fillText("もういっかいする", centerX, height * (this.onBackToTitle ? 0.9 : 0.93));
       ctx.restore();
+
+      if (this.onBackToTitle) {
+        ctx.save();
+        ctx.globalAlpha = blinkAlpha;
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold 16px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("タイトルにもどる", centerX, height * 0.965);
+        ctx.restore();
+      }
       return;
     }
 

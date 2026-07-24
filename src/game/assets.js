@@ -39,7 +39,7 @@ export function pickReadyRandom(images) {
 // これまでに loadImage() で読み込みを開始した「全ての画像」が、
 // 読み込み終わる（成功・失敗どちらでもOK）まで待つ。
 // 万が一ネットワークが遅すぎる場合に備えて timeoutMs で強制的に打ち切る。
-export function waitForAllImages({ timeoutMs = 10000, onProgress } = {}) {
+export function waitForAllImages({ timeoutMs = 20000, onProgress } = {}) {
   const allImages = Array.from(cache.values());
   const total = allImages.length;
 
