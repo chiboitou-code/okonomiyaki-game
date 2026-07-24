@@ -13,6 +13,9 @@ let bgmStarted = false;
 // ---------- シークレットモード（旧スコアモード）解放：タイトルロゴを3回タップで出現 ----------
 // 毎回、隠しコマンド（ロゴ3回タップ）が必須。あえて保存はしない仕様。
 let secretModeUnlocked = false;
+
+// テスト用メニュー（🛠）：現在は非表示。デバッグ時にtrueに戻せば復活する
+const DEBUG_MENU_ENABLED = false;
 let logoTapCount = 0;
 let logoTapResetTimer = null;
 
@@ -199,7 +202,9 @@ function renderUI() {
     if (secretModeUnlocked) {
       wrap.append(scoreRow);
     }
-    wrap.append(debugToggle, debugPanel);
+    if (DEBUG_MENU_ENABLED) {
+      wrap.append(debugToggle, debugPanel);
+    }
     uiLayer.appendChild(wrap);
   }
 }

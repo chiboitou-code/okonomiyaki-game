@@ -76,6 +76,7 @@ const CONFETTI_SPAWN_INTERVAL = 0.12; // 秒。紙吹雪の発生間隔
 const TOPPING_TAP_SCORE = 100; // トッピング1回ごとの得点（特にゲーム性は無いので固定得点）
 const PRAISE_DISPLAY_DURATION = 1.0;
 const SECRET_MODE_SCORE_THRESHOLD = 800; // このスコア以上でクリア画面に「シークレットモード」への入口が出る
+const SECRET_HINT_SCORE_THRESHOLD = 850; // このスコア以上で「隠しコマンドがあるよ」のヒントを表示
 const SECRET_MODE_SCORE_UNLOCK_ENABLED = false; // 一旦非表示。のちほど再実装する可能性あり（今はタイトルの隠しコマンドのみで解放）
 const CHARACTERS_ENABLED = false; // 応援キャラ2体：ドラッグ&ドロップ方式への変更に伴い一旦非表示（演出変更予定）
 const PRAISE_ENABLED = false; // 「じょうず！」等のメッセージ：同上の理由で一旦非表示
@@ -682,8 +683,8 @@ export class ToppingPhase {
     if (appear <= 0) return;
 
     const characters = [
-      { img: CHARACTER_A_IMG, baseX: width * 0.06, dir: -1, seed: 0 },
-      { img: CHARACTER_B_IMG, baseX: width * 0.94, dir: 1, seed: 10 },
+      { img: CHARACTER_A_IMG, baseX: width * 0.24, dir: -1, seed: 0 },
+      { img: CHARACTER_B_IMG, baseX: width * 0.76, dir: 1, seed: 10 },
     ];
     const baseY = height * 0.56; // 本体の横あたり。カード操作中の指と重ならない高さに配置
 
@@ -749,16 +750,21 @@ export class ToppingPhase {
     ctx.fillStyle = "#ffcf5c";
     ctx.fillText(scoreText, width / 2, height * 0.84);
 
-    // 「もういちど」（800点以上ならシークレットモードへの入口も下に表示）
+    // 「もういちど」（800点以上ならシークレットモードへの入口、850点以上なら隠しコマンドのヒントを下に表示）
     const secretAvailable = SECRET_MODE_SCORE_UNLOCK_ENABLED && this.onSecretMode && this.totalScore >= SECRET_MODE_SCORE_THRESHOLD;
+    const showSecretHint = !secretAvailable && this.totalScore >= SECRET_HINT_SCORE_THRESHOLD;
     ctx.fillStyle = "#fff";
     ctx.font = "bold 24px sans-serif";
-    ctx.fillText("もういちど", width / 2, height * (secretAvailable ? 0.89 : 0.93));
+    ctx.fillText("もういちど", width / 2, height * (secretAvailable || showSecretHint ? 0.89 : 0.93));
 
     if (secretAvailable) {
       ctx.fillStyle = "#ffd166";
       ctx.font = "bold 16px sans-serif";
       ctx.fillText("シークレットモード", width / 2, height * 0.965);
+    } else if (showSecretHint) {
+      ctx.fillStyle = "#ffd166";
+      ctx.font = "bold 14px sans-serif";
+      ctx.fillText("（ゲームタイトルを３回タップすると…？）", width / 2, height * 0.965);
     }
     ctx.restore();
   }

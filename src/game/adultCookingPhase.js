@@ -11,6 +11,7 @@ const LEVER_SPEED_TURN2_MULTIPLIER = 1.6;
 const LEVER_TIME_LIMIT = 3.0;
 const POWER_TARGET_TAPS = 10;
 const POWER_TIME_LIMIT = 3.0;
+const POWER_COUNTDOWN_DURATION = 3.0; // 秒。連打が始まる前の「3・2・1」カウントダウンの長さ
 const LEVER_FREEZE_DURATION = 0.8; // 秒。タップ後、メーターが止まった位置を見せておく時間
 const LEVER_TRANSITION_DURATION = 0.6; // 秒。テコ画像（へら）を見せる、ひっくり返す演出
 const RESULT_PAUSE = 0.9; // 秒。各メーターのスコアを表示しておく時間
@@ -27,6 +28,7 @@ const STAGE = {
   LEVER_FREEZE: "lever_freeze",
   LEVER_RESULT: "lever_result",
   LEVER_TRANSITION: "lever_transition",
+  POWER_COUNTDOWN: "power_countdown", // 連打が始まる前の「3・2・1」カウントダウン
   POWER: "power",
   POWER_RESULT: "power_result",
   FINISHED: "finished",
@@ -191,6 +193,12 @@ export class AdultCookingPhase {
 
     if (this.stage === STAGE.LEVER_TRANSITION) {
       if (elapsedSeconds - this.stageEnteredAt >= LEVER_TRANSITION_DURATION) {
+        this._enterStage(STAGE.POWER_COUNTDOWN, elapsedSeconds);
+      }
+    }
+
+    if (this.stage === STAGE.POWER_COUNTDOWN) {
+      if (elapsedSeconds - this.stageEnteredAt >= POWER_COUNTDOWN_DURATION) {
         this._enterStage(STAGE.POWER, elapsedSeconds);
       }
     }
@@ -326,6 +334,9 @@ export class AdultCookingPhase {
     if (this.stage === STAGE.LEVER_TRANSITION) {
       this._renderSpatulaTransition(ctx, width, height);
     }
+    if (this.stage === STAGE.POWER_COUNTDOWN) {
+      this._renderPowerCountdown(ctx, width, height, elapsedSeconds);
+    }
     if (this.stage === STAGE.POWER) {
       this._renderPowerMeter(ctx, width, height, elapsedSeconds);
     }
@@ -379,11 +390,13 @@ export class AdultCookingPhase {
     ctx.textAlign = "center";
     ctx.fillStyle = "#ffcf5c";
     ctx.font = "bold 28px sans-serif";
-    ctx.fillText("スコアモード", width / 2, height * 0.32);
+    ctx.fillText("シークレットモード", width / 2, height * 0.32);
 
     ctx.fillStyle = "#fff";
     ctx.font = "bold 17px sans-serif";
     const lines = [
+      "いろいろなゲームをプレイして",
+      "スコアを目指すモードだよ",
       "テコメーター：ジャストのタイミングでタップ！",
       `制限時間${LEVER_TIME_LIMIT}秒、中央に近く・早いほど高得点`,
       "そのあとパワーメーター：",
@@ -516,6 +529,49 @@ export class AdultCookingPhase {
     ctx.font = "bold 26px sans-serif";
     ctx.fillStyle = "#ffcf5c";
     ctx.fillText("ひっくり返す！", width / 2, height * 0.7);
+    ctx.restore();
+  }
+
+  // 連打が始まる前の「3・2・1」カウントダウン
+  _renderPowerCountdown(ctx, width, height, elapsedSeconds) {
+    ctx.save();
+    ctx.textAlign = "center";
+    const powerHeadingText = "パワーをためてひっくり返せ！";
+    const powerHeadingSize = this._fitFontSize(ctx, powerHeadingText, width * 0.92, 30);
+    ctx.font = `bold ${powerHeadingSize}px sans-serif`;
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText(powerHeadingText, width / 2, height * 0.2);
+    ctx.fillStyle = "#ffcf5c";
+    ctx.fillText(powerHeadingText, width / 2, height * 0.2);
+    ctx.restore();
+
+    const elapsed = elapsedSeconds - this.stageEnteredAt;
+    const countdownNumber = Math.max(Math.ceil(POWER_COUNTDOWN_DURATION - elapsed), 1);
+    // 1秒ごとに、数字がポンと大きくなってから縮む
+    const tSinceTick = elapsed % 1;
+    const pop = tSinceTick < 0.2 ? 1 + (1 - tSinceTick / 0.2) * 0.5 : 1;
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.translate(width / 2, height * 0.48);
+    ctx.scale(pop, pop);
+    ctx.font = "bold 90px sans-serif";
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText(`${countdownNumber}`, 0, 0);
+    ctx.fillStyle = "#ffd166";
+    ctx.fillText(`${countdownNumber}`, 0, 0);
+    ctx.restore();
+
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = "bold 20px sans-serif";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "#000";
+    ctx.strokeText("すばやく10回タップ！", width / 2, height * 0.64);
+    ctx.fillStyle = "#fff";
+    ctx.fillText("すばやく10回タップ！", width / 2, height * 0.64);
     ctx.restore();
   }
 

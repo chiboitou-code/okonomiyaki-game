@@ -72,6 +72,8 @@ export class CookingPhase {
     this.showingScoreSequence = false;
     this.scoreSequenceStartedAt = null;
     this.perfectCount = 0;
+    this.greatCount = 0;
+    this.goodCount = 0;
     this.totalTimeBonus = 0;
   }
 
@@ -275,6 +277,10 @@ export class CookingPhase {
       this.totalScore += points;
       if (result === "perfect") {
         this.perfectCount += 1;
+      } else if (result === "great") {
+        this.greatCount += 1;
+      } else if (result === "good") {
+        this.goodCount += 1;
       }
       this.totalTimeBonus += timeBonus;
       this._bounceScore();
@@ -611,14 +617,26 @@ export class CookingPhase {
       
       if (currentIndex === 0) {
         ctx.fillStyle = "#ffcf5c";
-        ctx.font = "bold 28px sans-serif";
-        ctx.fillText("パーフェクト", width / 2, height * 0.35);
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 18px sans-serif";
-        ctx.fillText("ひっくり返し", width / 2, height * 0.42);
-        ctx.fillStyle = "#fff";
-        ctx.font = "bold 56px sans-serif";
-        ctx.fillText(`${this.perfectCount} 回`, width / 2, height * 0.55);
+        ctx.font = "bold 26px sans-serif";
+        ctx.fillText("ひっくり返しの せいせき", width / 2, height * 0.32);
+
+        const rows = [
+          { label: "パーフェクト", count: this.perfectCount, color: "#ffd166" },
+          { label: "グレイト", count: this.greatCount, color: "#8bd17c" },
+          { label: "グッド", count: this.goodCount, color: "#5eb0ef" },
+        ];
+        rows.forEach((row, i) => {
+          const y = height * 0.44 + i * 58;
+          ctx.textAlign = "left";
+          ctx.fillStyle = row.color;
+          ctx.font = "bold 22px sans-serif";
+          ctx.fillText(row.label, width * 0.24, y);
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 32px sans-serif";
+          ctx.fillText(`${row.count} 回`, width * 0.76, y);
+        });
+        ctx.textAlign = "center";
       } else if (currentIndex === 1) {
         ctx.fillStyle = "#ffcf5c";
         ctx.font = "bold 28px sans-serif";
